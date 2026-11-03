@@ -22,6 +22,12 @@ python -m venv "$USERPROFILE/.venvs/sereno-model"
 
 Resultado del 2026-11-03: 2 pruebas pasan.
 
+## Cierre de la fase 0
+
+Cerrada el 2026-11-03. Andrés explicó que, sin semilla fija, una baja del F1 no se puede atribuir a la feature cambiada, porque también podría deberse al azar del entrenamiento.
+
+Pendiente para las fases siguientes: repetir la prueba de repetibilidad con todos los hilos y probar las skills en una sesión abierta desde este repositorio.
+
 ## Versiones
 
 `requirements.in` lista las dependencias directas y `requirements.txt` fija las versiones exactas. Las principales:
