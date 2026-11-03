@@ -1,0 +1,16 @@
+# Datasets and trained models stay out of Git; manifests and reports are tracked
+data/**
+!data/raw/
+!data/raw/.gitkeep
+!data/manifest.json
+artifacts/**
+!artifacts/.gitkeep
+!artifacts/*/
+!artifacts/*/report.json
+
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
