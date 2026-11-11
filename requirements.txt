@@ -1,5 +1,9 @@
+certifi==2026.10.23
+charset-normalizer==3.5.2
 cloudpickle==3.1.2
 colorama==0.4.6
+filelock==4.2.10
+idna==3.20
 iniconfig==2.3.1
 joblib==1.6.0
 lightgbm==4.7.0
@@ -12,8 +16,12 @@ pyarrow==26.0.1
 Pygments==2.21.0
 pytest==9.2.0
 python-dateutil==4.0.0
+requests==2.34.2
+requests-file==3.0.1
 scikit-learn==1.9.1
 scipy==1.18.1
 threadpoolctl==3.7.0
+tldextract==5.4.0
 tzdata==2026.6
+urllib3==2.8.0
 xgboost==3.4.1

@@ -5,4 +5,5 @@ lightgbm
 pandas
 pyarrow
 joblib
+tldextract
 pytest
