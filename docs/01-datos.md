@@ -29,7 +29,7 @@ Obtener un conjunto de URLs etiquetadas (phishing o legítima), limpio, con hash
 | OpenPhish | En pausa: falta confirmar si el proyecto puede ampararse en sus términos |
 | Términos de PhishTank | Sin leer: la página remite a un EULA de Cisco que no se pudo abrir |
 | Combinar las URLs legítimas sin sesgo de forma | Abierto |
-| Limpieza, duplicados y etiquetas contradictorias | Implementado y corrido el 2026-11-11; falta repetir la corrida con el repositorio en commit |
+| Limpieza, duplicados y etiquetas contradictorias | Hecho el 2026-11-11; ver el registro |
 | Fechas de las URLs legítimas | Pendiente |
 | Separar entrenamiento y prueba por dominio | Propuesta por confirmar |
 | Remuestrear solo el entrenamiento | Propuesta por confirmar |
@@ -115,7 +115,7 @@ Andrés mantuvo la selección de fuentes del 2026-11-03. El Charter, la sección
 
 `python -m sereno_model.data.clean --data-dir data` comprueba el hash de cada descarga contra `data/manifest.json`, normaliza cada URL, descarta las inválidas, quita duplicados y aparta las URL con etiquetas contradictorias. La normalización es la del criterio de «URL equivalente» del ADD (sección 3.1), en `src/sereno_model/data/normalize.py`. La salida queda en `data/processed/<fecha>/`, con `clean_report.json`.
 
-Corrida `20261111T214830Z`, con cambios sin commit: los conteos sirven para orientar la fase, no para citarse.
+Corrida `20261111T215311Z`, sobre el commit `e703cf5` y con el repositorio limpio. Una corrida anterior del mismo día, hecha antes del commit, dio el mismo hash de contenido.
 
 | Fuente | Filas leídas | Inválidas | Duplicadas en la fuente | Phishing | Legítimas |
 |---|---|---|---|---|---|
