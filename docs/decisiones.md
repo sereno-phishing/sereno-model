@@ -15,3 +15,32 @@ La GPU (RTX 3070 Laptop, 8 GB) no se usa en el entrenamiento oficial. Random For
 ## 2026-11-03: ubicación del entorno y los datos
 
 El entorno virtual vive fuera de OneDrive, en `%USERPROFILE%\.venvs\sereno-model`, para no sincronizar miles de archivos. Las descargas originales quedan en `data/raw/`, dentro de OneDrive, porque los feeds de phishing no se pueden volver a descargar iguales y así tienen respaldo.
+
+## 2026-11-03: fuentes de datos
+
+Decisión de Andrés sobre la propuesta de la Fase 1. Se usan las fuentes del ADD que entregan URLs:
+
+| Clase | Fuentes |
+|---|---|
+| Phishing | PhishTank y URLs de phishing de Mendeley (Hannousse y Yahiouche, 2021; Dam Minh y Tran Cong, 2026) |
+| Legítima | URLs legítimas de esos mismos datasets de Mendeley y dominios de Majestic Million |
+
+UCI Phishing Websites queda fuera del entrenamiento: su página solo lista atributos calculados y algunos parecen depender de la página, lo que choca con RES-01. El dataset de Vrbančič (2020) se descarta porque su descripción no menciona URLs crudas.
+
+OpenPhish queda en pausa hasta aclarar sus términos (I-50). Common Crawl se usa solo si el sesgo de forma persiste, porque agregarlo implica cambiar el Charter y el ADD.
+
+Se descartó elegir por número de menciones en los papers: varios de los más citados entregan atributos ya calculados, y Kaggle y Mendeley agrupan datasets distintos.
+
+## 2026-11-11: fuentes en los documentos de la tesis
+
+Andrés mantuvo la selección del 2026-11-03. El Charter, el ADD y los demás documentos de TP1 se alinearon a ella en lugar de reincorporar UCI Phishing Websites y OpenPhish.
+
+## 2026-11-11: limpieza y duplicados
+
+Las URL se comparan después de aplicar la normalización del criterio de «URL equivalente» del ADD (sección 3.1): esquema y host en minúsculas, sin puerto por defecto, sin fragmento y con los caracteres no reservados decodificados. Se conservan como distintos http y https, el prefijo «www.», la barra final y el orden de los parámetros. Así el entrenamiento y el caché usan la misma definición. Se descartó una normalización más agresiva porque el ADD la excluye.
+
+Una URL con etiquetas contradictorias entre fuentes se excluye y se registra aparte; no se elige una etiqueta. Una URL repetida con la misma etiqueta se conserva una vez, con todas sus fuentes.
+
+Son inválidas las URL vacías, sin host, con un esquema distinto de http o https, o con espacios o caracteres de control. De PhishTank solo entran las filas verificadas.
+
+Los dominios de Majestic Million no se convierten en URL en este paso.

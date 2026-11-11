@@ -11,7 +11,7 @@ Fuente: ADD OE2 (secciones del componente de IA, Tablas 3, 5, 10 y 11, Figura 25
 | Entrada | Vector de características léxicas y de host, solo intrínsecas de la URL; sin DOM ni HTML | Tabla 10, RES-01 |
 | Vector | Definición idéntica en entrenamiento e inferencia | RF-04 |
 | Salida | Veredicto, puntaje entre 0 y 1 y versión del modelo | RF-05, Tabla 10 |
-| Datos | UCI Phishing Websites, Mendeley Data, PhishTank, OpenPhish y Majestic Million; solo fuentes abiertas | RES-03, sección de datos |
+| Datos | Mendeley Data, PhishTank y Majestic Million; solo fuentes abiertas | RES-03, sección de datos |
 | Preparación | Limpieza, remuestreo por desbalance y partición fija de entrenamiento y prueba | Figura 25 |
 | Reproducibilidad | Misma partición y semilla entre versiones | Tabla 12, Tabla 5 |
 | Entrenamiento | Fuera de línea, en equipos propios, sin GPU | Tabla 3 |
@@ -33,7 +33,7 @@ Fuente: ADD OE2 (secciones del componente de IA, Tablas 3, 5, 10 y 11, Figura 25
 
 | Tema | Pendiente | Fase |
 |---|---|---|
-| UCI y Mendeley | UCI incluye atributos de HTML y JavaScript, lo que choca con RES-01; falta revisar Mendeley (I-47) | 1 |
+| URLs legítimas | Majestic Million solo aporta dominios; falta definir cómo se combina con las URLs de Mendeley sin sesgo de forma | 1 |
 | Características de host | Confirmar si se calculan solo desde el texto de la URL. "Intrínsecas" y RES-01 lo sugieren, pero el ADD no menciona DNS ni WHOIS | 2 |
 | Clave del caché | Andrés decidió usar la URL normalizada; falta corregir el backend, que usa el dominio (I-46) | Integración |
 | Forma del veredicto | El puerto `Classifier` del backend devuelve tres estados y el ADD define dos (I-49) | Integración |
