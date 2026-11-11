@@ -52,3 +52,13 @@ Decisión de Andrés. Se conserva todo el phishing y las legítimas se muestrean
 Majestic Million solo cubre lo que falta en los estratos sin ruta. Sus dominios salen del top 100,000, sin los que ya aparecen como host, y se escriben con el esquema y el «www.» del estrato.
 
 El sesgo de forma de las URL con ruta no se corrige con el muestreo, porque casi no hay legítimas con ruta en https y sin «www.». Se trata en las características de la Fase 2: el esquema y el «www.» quedan fuera del vector, y el «www.» se quita antes de calcular la longitud y los subdominios. El control de sesgo de fuente lo verifica. Si falla, se agrega Common Crawl como fuente de legítimas con ruta, lo que cambia el Charter y el ADD.
+
+## 2026-11-11: tope por dominio, proporción y partición
+
+Decisión de Andrés: como máximo 500 URL de phishing por dominio registrado. Diez dominios, plataformas de alojamiento y acortadores, reunían el 45 % del phishing; sin el tope, el F1 mediría sobre todo qué tan bien se reconoce una plataforma, y el modelo aprendería a marcar esas plataformas enteras. Se descartaron topes de 100 y 250 porque dejan menos de la mitad del phishing, y de 1,000 porque `google.com` y otros diez dominios seguirían pesando el doble.
+
+Esto reemplaza la decisión anterior de conservar todo el phishing. La proporción pasa de 0.59 a 1.0 legítimas por cada URL de phishing, con el mismo criterio: la mayor sin faltantes y con Majestic Million, sin pasar de clases parejas.
+
+La partición es 80/20, agrupada por dominio registrado y con las clases en proporción similar en ambos lados. La proporción es la que usan Sankaranarayanan et al. (2024) y Naseeb et al. (2025). El dominio registrado sale de `tldextract` con su lista de sufijos incluida, sin red y solo con sufijos ICANN, para que todos los sitios de una plataforma compartida queden del mismo lado. Se descartó copiar la lista al repositorio y analizarla a mano por ser más código propio que mantener.
+
+Limitación que se declara: con solo la URL no se distingue un documento legítimo de uno de phishing alojado en la misma plataforma. Las métricas se reportarán también por separado para plataformas compartidas y acortadores.

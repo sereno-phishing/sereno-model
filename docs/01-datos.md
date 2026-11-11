@@ -31,8 +31,8 @@ Obtener un conjunto de URLs etiquetadas (phishing o legítima), limpio, con hash
 | Combinar las URLs legítimas sin sesgo de forma | Decidido el 2026-11-11; el sesgo con ruta se verifica en la Fase 2 |
 | Limpieza, duplicados y etiquetas contradictorias | Hecho el 2026-11-11; ver el registro |
 | Fechas de las URLs legítimas | Pendiente |
-| Separar entrenamiento y prueba por dominio | Propuesta por confirmar |
-| Remuestrear solo el entrenamiento | Propuesta por confirmar |
+| Separar entrenamiento y prueba por dominio | Implementado el 2026-11-11; ver el registro |
+| Remuestrear solo el entrenamiento | Por confirmar: las clases quedan parejas tras el armado |
 
 ## Criterio de salida
 
@@ -174,6 +174,45 @@ Hasta una proporción de 0.5 no hace falta ningún dominio de Majestic Million.
 Decisión de Andrés: proporción de 0.59, y el sesgo de forma de las URL con ruta se trata en las características de la Fase 2. Ver `decisiones.md`.
 
 Corrida `20261111T220928Z`, sobre el commit `985b8a5` y con el repositorio limpio, con proporción 0.59 y semilla 20261111: 106,697 URL, 67,105 de phishing y 39,592 legítimas, de las cuales 1,160 salen de Majestic Million. La distancia de forma queda en 0.0001 sin ruta y en 0.786 con ruta. Hash del contenido: `b1d5830a7ae19f5c22b236893730357db8c9b87f64d4e4aa13a3bad56dbb3cf6`. La tabla comparativa de arriba salió de corridas anteriores al commit.
+
+### 2026-11-11: partición por dominio y concentración del phishing
+
+`python -m sereno_model.data.split --data-dir data` parte el conjunto en entrenamiento y prueba, 80/20, agrupando por dominio registrado para que ningún dominio quede en los dos lados. El dominio se obtiene con `tldextract` 5.4.0 y la lista de sufijos que trae incluida, sin red y solo con sufijos ICANN: todos los sitios de una plataforma compartida forman un grupo. La proporción 80/20 es la de Sankaranarayanan et al. (2024) y Naseeb et al. (2025); el ADD no fija ninguna.
+
+Corrida `20261111T221721Z`, con cambios sin commit: orienta la fase y no se cita.
+
+| | URL | Phishing | Legítimas | Grupos |
+|---|---|---|---|---|
+| Entrenamiento | 85,358 | 53,684 | 31,674 | 35,927 |
+| Prueba | 21,339 | 13,421 | 7,918 | 8,983 |
+
+Controles de duplicados y de dominios: 0 URL y 0 grupos en ambos lados.
+
+El phishing está concentrado en pocos dominios: los 10 mayores reúnen el 45.1 % y los 50 mayores el 64.0 %. Son plataformas de alojamiento y acortadores: `google.com` (6,332 URL, casi todas de `docs.google.com` y `sites.google.com`), `qrco.de`, `weebly.com`, `q-r.to`, `ead.me`, `web.app`, `firebaseapp.com`, `bit.ly`, `pages.dev` y `r2.dev`. Las legítimas no están concentradas: su mayor grupo tiene 178 URL.
+
+Con esta semilla, `google.com` quedó entero en la prueba y es el 47 % de su phishing, y entrenamiento no tiene ninguna URL de ese dominio. La diferencia de forma sin ruta, que era 0.0001 en el conjunto completo, subió a 0.015 en entrenamiento y a 0.079 en prueba.
+
+Decisión de Andrés: tope de 500 URL de phishing por dominio registrado, elegidas al azar con la semilla.
+
+### 2026-11-11: conjunto y partición con el tope por dominio
+
+El tope se aplica en `assemble`, antes de calcular las cuotas de legítimas. Recorta 16 dominios y deja 40,265 URL de phishing de las 67,105 limpias. Los dominios recortados son `google.com`, `qrco.de`, `weebly.com`, `q-r.to`, `ead.me`, `web.app`, `firebaseapp.com`, `bit.ly`, `pages.dev`, `r2.dev`, `adobe.com`, `campaign-archive.com`, `wixstudio.com`, `dropbox.com`, `blogspot.com` y `vercel.app`.
+
+Con menos phishing, la proporción pasa a 1.0 legítimas por cada URL de phishing. Sigue el mismo criterio que antes: la mayor proporción sin faltantes, que usa casi todas las legítimas con ruta e incluye Majestic Million, sin pasar de clases parejas.
+
+Corridas `20261111T222505Z` (conjunto) y `20261111T222515Z` (partición), con cambios sin commit: orientan la fase y no se citan.
+
+| | URL | Phishing | Legítimas | De Majestic | Grupos |
+|---|---|---|---|---|---|
+| Conjunto | 80,530 | 40,265 | 40,265 | 1,113 | 45,633 |
+| Entrenamiento | 64,423 | 32,212 | 32,211 | 906 | 36,505 |
+| Prueba | 16,107 | 8,053 | 8,054 | 207 | 9,128 |
+
+Controles de duplicados y de dominios: 0 URL y 0 grupos en ambos lados. El mayor dominio de phishing pesa el 1.6 % en entrenamiento y el 6.2 % en prueba; antes del tope, `google.com` era el 47 % del phishing de prueba. Los 16 dominios recortados suman el 18.6 % del phishing de entrenamiento y el 24.8 % del de prueba.
+
+La distancia de forma entre clases queda en 0.003 sin ruta y 0.713 con ruta en entrenamiento, y en 0.012 sin ruta y 0.617 con ruta en prueba. La de las URL con ruta se trata en las características de la Fase 2.
+
+Las clases quedan parejas, así que el muestreo de las legítimas ya cumple el papel del remuestreo por desbalance que pide el ADD, y ocurre antes de la partición, como indica su sección 8.2. Falta confirmar con Andrés si hace falta otro remuestreo en entrenamiento.
 
 ## Revisión de Andrés
 
