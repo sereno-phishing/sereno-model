@@ -1,0 +1,48 @@
+{
+  "downloads": [
+    {
+      "source": "hannousse_2021",
+      "url": "https://data.mendeley.com/public-files/datasets/c2gw7fy2j4/files/575316f4-ee1d-453e-a04f-7b950915b61b/file_downloaded",
+      "path": "raw/hannousse_2021/20261104T024950Z/dataset_B_05_2020.csv",
+      "sha256": "21093e2902e5441c86a6daf95e86e7c332046e477fdf109a579d7bd81e586d6c",
+      "bytes": 3661166,
+      "retrieved_at": "2026-11-04T02:49:50Z",
+      "last_modified": "Fri, 25 Jun 2021 22:45:03 GMT",
+      "license": "CC BY 4.0",
+      "citation": "Hannousse, A. & Yahiouche, S. (2021). Web page phishing detection (Version 3). Mendeley Data. https://doi.org/10.17632/c2gw7fy2j4.3"
+    },
+    {
+      "source": "url_phish_2026",
+      "url": "https://data.mendeley.com/public-files/datasets/65z9twcx3r/files/0e9c55e4-9adb-43f5-8403-1bbd143ebdb6/file_downloaded",
+      "path": "raw/url_phish_2026/20261104T024953Z/Dataset.csv",
+      "sha256": "d68b3cd0648dcf9c775347416ad1a8995e8a025921fbe3871ca6158d4db3c3a1",
+      "bytes": 15149338,
+      "retrieved_at": "2026-11-04T02:49:53Z",
+      "last_modified": "Mon, 09 Mar 2026 11:13:38 GMT",
+      "license": "CC BY 4.0",
+      "citation": "Dam Minh, L. & Tran Cong, H. (2026). URL-Phish: A Feature-Engineered Dataset for Phishing Detection (Version 2). Mendeley Data. https://doi.org/10.17632/65z9twcx3r.2"
+    },
+    {
+      "source": "phishtank",
+      "url": "https://data.phishtank.com/data/online-valid.csv.gz",
+      "path": "raw/phishtank/20261104T024957Z/online-valid.csv.gz",
+      "sha256": "c373c3ec1adfc2cd49aa93bbdb76be43933dd31f77fe561709a257c8bccef33f",
+      "bytes": 1827908,
+      "retrieved_at": "2026-11-04T02:49:57Z",
+      "last_modified": "Wed, 04 Nov 2026 02:22:23 GMT",
+      "license": "PhishTank terms; pending review",
+      "citation": "PhishTank. Online valid phishing URLs. https://phishtank.org/"
+    },
+    {
+      "source": "majestic_million",
+      "url": "https://downloads.majestic.com/majestic_million.csv",
+      "path": "raw/majestic_million/20261104T024958Z/majestic_million.csv",
+      "sha256": "f2048bbf3f6a322af38f87d89db8333be708b47b3200e6b394fcb5a80ea1c865",
+      "bytes": 80400270,
+      "retrieved_at": "2026-11-04T02:49:58Z",
+      "last_modified": "Tue, 03 Nov 2026 06:00:21 GMT",
+      "license": "CC BY 3.0",
+      "citation": "Majestic. The Majestic Million. https://majestic.com/reports/majestic-million"
+    }
+  ]
+}
