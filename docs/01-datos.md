@@ -173,6 +173,8 @@ Hasta una proporción de 0.5 no hace falta ningún dominio de Majestic Million.
 
 Decisión de Andrés: proporción de 0.59, y el sesgo de forma de las URL con ruta se trata en las características de la Fase 2. Ver `decisiones.md`.
 
+Corrida `20261111T220928Z`, sobre el commit `985b8a5` y con el repositorio limpio, con proporción 0.59 y semilla 20261111: 106,697 URL, 67,105 de phishing y 39,592 legítimas, de las cuales 1,160 salen de Majestic Million. La distancia de forma queda en 0.0001 sin ruta y en 0.786 con ruta. Hash del contenido: `b1d5830a7ae19f5c22b236893730357db8c9b87f64d4e4aa13a3bad56dbb3cf6`. La tabla comparativa de arriba salió de corridas anteriores al commit.
+
 ## Revisión de Andrés
 
 Pendiente.
