@@ -28,7 +28,7 @@ Obtener un conjunto de URLs etiquetadas (phishing o legítima), limpio, con hash
 | Selección de fuentes | Aprobada por Andrés; ver `decisiones.md` |
 | OpenPhish | En pausa: falta confirmar si el proyecto puede ampararse en sus términos |
 | Términos de PhishTank | Sin leer: la página remite a un EULA de Cisco que no se pudo abrir |
-| Combinar las URLs legítimas sin sesgo de forma | Abierto |
+| Combinar las URLs legítimas sin sesgo de forma | Decidido el 2026-11-11; el sesgo con ruta se verifica en la Fase 2 |
 | Limpieza, duplicados y etiquetas contradictorias | Hecho el 2026-11-11; ver el registro |
 | Fechas de las URLs legítimas | Pendiente |
 | Separar entrenamiento y prueba por dominio | Propuesta por confirmar |
@@ -134,6 +134,44 @@ En Dam Minh y Tran Cong (2026) la etiqueta 1 es phishing: 5,405 de sus 16,600 UR
 Majestic Million se guarda aparte como dominios (1,000,000, sin inválidos ni duplicados). No se convierten en URL: cómo se combinan con las legítimas sigue abierto.
 
 Hash del contenido limpio: `95260c626a56f16123dce18f62773491126d6e9af1e74220e3177b810767ddbc`.
+
+### 2026-11-11: sesgo de esquema y de «www.»
+
+Decisión de Andrés: las legítimas se muestrean por estratos para igualar la proporción con ruta y sin ruta de las de phishing, y una parte acotada del estrato sin ruta sale de Majestic Million.
+
+Exploración sobre la corrida `20261111T215311Z`, hecha fuera de un script: orienta la fase y no se cita.
+
+| Grupo | URL | https | Con «www.» | Longitud mediana |
+|---|---|---|---|---|
+| Legítimas sin ruta | 77,201 | 36.5 % | 73.8 % | 24 |
+| Phishing sin ruta | 21,128 | 82.8 % | 2.1 % | 35 |
+| Legítimas con ruta | 27,131 | 32.4 % | 79.9 % | 38 |
+| Phishing con ruta | 45,977 | 90.3 % | 6.4 % | 43 |
+
+El esquema y el prefijo «www.» separan las clases casi por sí solos, y eso viene de cómo y cuándo se recogió cada fuente, no del phishing. Igualar solo la proporción con ruta no lo corrige. Solo el 11.6 % de las legítimas sin ruta usa https sin «www.», la forma del 81.5 % de las de phishing sin ruta.
+
+De los dominios de Majestic Million, 31,380 ya aparecen como host en las URL limpias y 391 son host de alguna URL de phishing. Entre las URL limpias, 21 hosts tienen URL de ambas clases.
+
+Resuelto en el armado del conjunto, más abajo.
+
+### 2026-11-11: armado del conjunto
+
+`python -m sereno_model.data.assemble --data-dir data` conserva todo el phishing y muestrea las legítimas por ocho estratos de forma (con o sin ruta, esquema y «www.») para imitar la distribución del phishing. Majestic Million solo cubre lo que falte en los estratos sin ruta, con dominios del top 100,000 que no aparezcan ya como host. Con `--dry-run` compara proporciones sin escribir nada.
+
+Corridas con cambios sin commit: orientan la fase y no se citan. La distancia es la variación total entre las distribuciones de forma de las dos clases; antes de muestrear vale 0.759 en total, 0.786 con ruta y 0.718 sin ruta.
+
+| Legítimas por phishing | Legítimas | De Majestic | Distancia total | Con ruta | Sin ruta |
+|---|---|---|---|---|---|
+| 0.3 | 20,132 | 0 | 0.489 | 0.714 | 0.0001 |
+| 0.4 | 26,843 | 0 | 0.514 | 0.750 | 0.0001 |
+| 0.5 | 33,555 | 0 | 0.529 | 0.772 | 0.0001 |
+| 0.59 | 39,592 | 1,160 | 0.538 | 0.786 | 0.0001 |
+
+Sin ruta, el muestreo elimina la diferencia de forma. Con ruta casi no la cambia: 39,515 URL de phishing usan https sin «www.» y solo 2,005 legítimas tienen esa forma, así que el resto se completa con legítimas de otras formas. Majestic Million no ayuda ahí porque no trae rutas.
+
+Hasta una proporción de 0.5 no hace falta ningún dominio de Majestic Million.
+
+Decisión de Andrés: proporción de 0.59, y el sesgo de forma de las URL con ruta se trata en las características de la Fase 2. Ver `decisiones.md`.
 
 ## Revisión de Andrés
 

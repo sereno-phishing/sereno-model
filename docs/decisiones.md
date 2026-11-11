@@ -44,3 +44,11 @@ Una URL con etiquetas contradictorias entre fuentes se excluye y se registra apa
 Son inválidas las URL vacías, sin host, con un esquema distinto de http o https, o con espacios o caracteres de control. De PhishTank solo entran las filas verificadas.
 
 Los dominios de Majestic Million no se convierten en URL en este paso.
+
+## 2026-11-11: armado del conjunto y sesgo de forma
+
+Decisión de Andrés. Se conserva todo el phishing y las legítimas se muestrean por estratos de forma (con o sin ruta, esquema y «www.») para imitar al phishing. La proporción es de 0.59 legítimas por cada URL de phishing: usa todas las legítimas con ruta y es la única de las comparadas en la que entra Majestic Million, con el 2.9 % de las legítimas. Las proporciones menores pierden hasta la mitad de las legítimas y casi no reducen la diferencia de forma de las URL con ruta.
+
+Majestic Million solo cubre lo que falta en los estratos sin ruta. Sus dominios salen del top 100,000, sin los que ya aparecen como host, y se escriben con el esquema y el «www.» del estrato.
+
+El sesgo de forma de las URL con ruta no se corrige con el muestreo, porque casi no hay legítimas con ruta en https y sin «www.». Se trata en las características de la Fase 2: el esquema y el «www.» quedan fuera del vector, y el «www.» se quita antes de calcular la longitud y los subdominios. El control de sesgo de fuente lo verifica. Si falla, se agrega Common Crawl como fuente de legítimas con ruta, lo que cambia el Charter y el ADD.
