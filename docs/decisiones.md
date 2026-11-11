@@ -62,3 +62,7 @@ Esto reemplaza la decisión anterior de conservar todo el phishing. La proporci�
 La partición es 80/20, agrupada por dominio registrado y con las clases en proporción similar en ambos lados. La proporción es la que usan Sankaranarayanan et al. (2024) y Naseeb et al. (2025). El dominio registrado sale de `tldextract` con su lista de sufijos incluida, sin red y solo con sufijos ICANN, para que todos los sitios de una plataforma compartida queden del mismo lado. Se descartó copiar la lista al repositorio y analizarla a mano por ser más código propio que mantener.
 
 Limitación que se declara: con solo la URL no se distingue un documento legítimo de uno de phishing alojado en la misma plataforma. Las métricas se reportarán también por separado para plataformas compartidas y acortadores.
+
+## 2026-11-11: sin remuestreo adicional
+
+Decisión de Andrés. El armado deja las clases parejas (40,265 y 40,265), así que no se aplica SMOTE ni otro remuestreo en entrenamiento. El balance sale del tope por dominio y del muestreo de las legítimas, que ocurren antes de la partición. Se descartó SMOTE porque ya no hay desbalance que corregir y porque genera ejemplos sintéticos en el espacio de características.

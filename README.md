@@ -6,7 +6,7 @@ Corresponde a la "Estación de entrenamiento" del despliegue del ADD. Este repos
 
 ## Estado
 
-Entorno listo y primeras fuentes descargadas; aún sin dataset limpio ni modelo real. Fase actual: 1, datos. Instalación en `docs/00-entorno.md`.
+Conjunto de datos limpio y partición fija de entrenamiento y prueba listos; aún sin características ni modelo real. Fase 1 (datos) cerrada; sigue la Fase 2, características. Instalación en `docs/00-entorno.md`.
 
 ## Documentación
 

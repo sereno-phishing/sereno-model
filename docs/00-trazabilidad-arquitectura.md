@@ -33,12 +33,12 @@ Fuente: ADD OE2 (secciones del componente de IA, Tablas 3, 5, 10 y 11, Figura 25
 
 | Tema | Pendiente | Fase |
 |---|---|---|
-| URLs legítimas | Majestic Million solo aporta dominios; falta definir cómo se combina con las URLs de Mendeley sin sesgo de forma | 1 |
 | Características de host | Confirmar si se calculan solo desde el texto de la URL. "Intrínsecas" y RES-01 lo sugieren, pero el ADD no menciona DNS ni WHOIS | 2 |
 | Clave del caché | Andrés decidió usar la URL normalizada; falta corregir el backend, que usa el dominio (I-46) | Integración |
 | Forma del veredicto | El puerto `Classifier` del backend devuelve tres estados y el ADD define dos (I-49) | Integración |
 
-## Propuestas compatibles con el ADD, por confirmar
+## Decidido en la Fase 1, compatible con el ADD
 
-- Separar entrenamiento y prueba por dominio, para que un mismo dominio no aparezca en ambos.
-- Aplicar el remuestreo solo al entrenamiento, para que la prueba siga siendo ciega.
+- Entrenamiento y prueba se separan por dominio registrado, para que un mismo dominio no aparezca en ambos.
+- El balance de clases sale del armado del conjunto: tope de 500 URL de phishing por dominio y muestreo de las legítimas por estratos de forma. Ocurre antes de la partición, como dice la sección 8.2, y no se aplica otro remuestreo en entrenamiento.
+- El esquema y el «www.» quedan fuera del vector de características, salvo que el control de sesgo de fuente muestre que no delatan la fuente.

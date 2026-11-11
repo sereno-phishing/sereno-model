@@ -1,6 +1,6 @@
 # Fase 1: datos
 
-Estado: abierta el 2026-11-03.
+Estado: cerrada el 2026-11-11. Abierta el 2026-11-03.
 
 ## Objetivo
 
@@ -27,12 +27,12 @@ Obtener un conjunto de URLs etiquetadas (phishing o legítima), limpio, con hash
 | Revisar qué datasets usa la literatura y si cumplen RES-01 | Corpus revisado; literatura 2023-2026 incompleta |
 | Selección de fuentes | Aprobada por Andrés; ver `decisiones.md` |
 | OpenPhish | En pausa: falta confirmar si el proyecto puede ampararse en sus términos |
-| Términos de PhishTank | Sin leer: la página remite a un EULA de Cisco que no se pudo abrir |
+| Términos de PhishTank | Leídas las páginas de PhishTank el 2026-11-11; el EULA de Cisco sigue sin poder leerse. Ver el registro |
 | Combinar las URLs legítimas sin sesgo de forma | Decidido el 2026-11-11; el sesgo con ruta se verifica en la Fase 2 |
 | Limpieza, duplicados y etiquetas contradictorias | Hecho el 2026-11-11; ver el registro |
-| Fechas de las URLs legítimas | Pendiente |
+| Fechas de las URLs legítimas | No disponibles: las fuentes no las traen. El reporte de la partición da el rango de fechas del phishing y lo declara |
 | Separar entrenamiento y prueba por dominio | Implementado el 2026-11-11; ver el registro |
-| Remuestrear solo el entrenamiento | Por confirmar: las clases quedan parejas tras el armado |
+| Remuestrear solo el entrenamiento | Decidido el 2026-11-11: sin remuestreo adicional, porque las clases quedan parejas tras el armado |
 
 ## Criterio de salida
 
@@ -214,6 +214,36 @@ La distancia de forma entre clases queda en 0.003 sin ruta y 0.713 con ruta en e
 
 Las clases quedan parejas, así que el muestreo de las legítimas ya cumple el papel del remuestreo por desbalance que pide el ADD, y ocurre antes de la partición, como indica su sección 8.2. Falta confirmar con Andrés si hace falta otro remuestreo en entrenamiento.
 
+### 2026-11-11: términos de PhishTank
+
+Se leyeron `developer_info.php`, `faq.php`, `terms.php` y `api_info.php` de phishtank.org.
+
+- La descarga sin clave está permitida con un límite: «Without this key, you will be limited to a few downloads per day». No da la cifra.
+- El uso comercial y no comercial está permitido: a la pregunta «Is it OK to use the API for both commercial and non-commercial uses?» responde «Yes, it is OK». El uso académico no se menciona aparte.
+- Los términos archivados, de OpenDNS, dicen que los datos «are available for commercial use without charge» y llevan un aviso de licencia Creative Commons Attribution-ShareAlike 2.5. No queda claro si ese aviso cubre los datos.
+- La página de términos remite al Cisco End User License Agreement como términos vigentes. Ese documento es un PDF cuyo texto no se pudo extraer, así que su contenido sigue sin leerse.
+- No se pudo saber si el registro de claves está abierto.
+
+Mientras no se lea el EULA, el proyecto no redistribuye el archivo de PhishTank ni un dataset derivado, y cita la fuente con su fecha de descarga.
+
 ## Revisión de Andrés
 
-Pendiente.
+2026-11-11. Andrés explicó la fase con el ejemplo de un alumno y su examen. Al inicio confundió la fuga de datos con un falso negativo y con la concentración; se aclaró con ese ejemplo y luego lo explicó así:
+
+- Partición por dominio: si los ejercicios del examen son casi los mismos de la práctica, el alumno «puede solo acordarse» y la nota no es confiable; los del examen tienen que ser distintos a los del entrenamiento.
+- Tope de 500 por dominio: sin el tope el modelo aprendería que `docs.google.com` es phishing y bloquearía documentos reales.
+- Sesgo de forma con ruta: el modelo aprendería que la forma de la URL, y no su contenido, indica la clase, y fallaría con las URL reales. Se le «tapa el color del papel»: el esquema y el «www.» quedan fuera de las características, y se comprueba que no los use.
+
+Andrés confirmó además que no se aplica remuestreo adicional en entrenamiento.
+
+## Cierre
+
+Fase cerrada el 2026-11-11. Criterios de salida: las cuatro fuentes tienen hash, fecha y origen en `data/manifest.json`; la partición está guardada y se reproduce con la semilla 20261111; los controles de duplicados y de dominios dan cero y los de forma, fuente y fechas están reportados en `split_report.json`; los documentos de la tesis nombran las fuentes usadas; y Andrés explicó la fase.
+
+Pasan a las fases siguientes:
+
+- El sesgo de forma de las URL con ruta, que se trata y se verifica en la Fase 2.
+- Los controles de importancia y de estabilidad, que necesitan un modelo entrenado.
+- El Cisco End User License Agreement de PhishTank, sin leer. Mientras tanto no se redistribuyen sus datos.
+- OpenPhish sigue en pausa y la revisión de datasets en la literatura de 2023-2026 quedó incompleta.
+
