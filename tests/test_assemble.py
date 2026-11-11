@@ -1,5 +1,6 @@
 import hashlib
 import json
+import random
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,9 +31,15 @@ def make_clean_run(
     legitimate: list[str],
     majestic: list[str] = (),
     stamp: str = CLEAN_STAMP,
+    row_order_seed: int | None = None,
 ) -> Path:
-    """Write a tiny cleaning run (URLs, ranked domains and report) and return the data dir."""
+    """Write a tiny cleaning run (URLs, ranked domains and report) and return the data dir.
+
+    Rows are stored sorted by URL unless ``row_order_seed`` asks for a shuffled order.
+    """
     rows = sorted([(url, PHISHING) for url in phishing] + [(url, LEGITIMATE) for url in legitimate])
+    if row_order_seed is not None:
+        random.Random(row_order_seed).shuffle(rows)
     urls = pd.DataFrame(
         {
             "url": [url for url, _ in rows],
@@ -420,7 +427,7 @@ def test_report_records_the_cleaning_run_parameters_and_versions(tmp_path):
     assert report["clean_run"]["content_hash"] == clean_report["content_hash"]["value"]
     assert len(report["clean_run"]["majestic_domains_sha256"]) == 64
     parameters = report["parameters"]
-    assert parameters["legit_ratio"] == 0.59
+    assert parameters["legit_ratio"] == 1.0
     assert parameters["legit_ratio_source"] == "default"
     assert "2026-11-11" in parameters["legit_ratio_note"]
     assert parameters["seed"] == 20261111
@@ -528,3 +535,216 @@ def test_cli_assembles_the_given_data_dir_and_prints_a_summary(tmp_path, capsys)
     assert report["parameters"]["legit_ratio"] == 0.75
     assert report["parameters"]["seed"] == 3
     assert (folders[0] / "dataset.parquet").exists()
+
+
+def phishing_urls(data_dir: Path, stamp: str = STAMP) -> list[str]:
+    frame = read_dataset(data_dir, stamp)
+    return list(frame.loc[frame["label"] == PHISHING, "url"])
+
+
+def test_default_cap_is_500_phishing_urls_per_registered_domain(tmp_path):
+    hosted = many(503, "https://site{}.sharedhost.com/login")
+    data_dir = make_clean_run(tmp_path, [*hosted, "https://other.example/login"], [])
+
+    report = assemble(data_dir, legit_ratio=0.5, now=NOW)
+
+    kept = phishing_urls(data_dir)
+    assert len(kept) == 501
+    assert "https://other.example/login" in kept
+    assert report["parameters"]["max_phishing_per_domain"] == 500
+    assert report["totals"]["phishing"] == 501
+
+
+def test_caps_phishing_only_in_registered_domains_above_the_cap(tmp_path):
+    big = [
+        *many(4, "https://docs.bigplatform.com/d/{}"),
+        *many(3, "https://www.bigplatform.com/view/{}"),
+        "https://bigplatform.com/form",
+        "http://sites.bigplatform.com/",
+    ]
+    at_cap = many(3, "https://page{}.smallhost.org/login")
+    single = many(2, "https://bad{}.example/login")
+    legitimate = many(6, "https://www.bigplatform.com/about/{}") + many(2, "https://ok{}.example/a")
+    data_dir = make_clean_run(tmp_path, big + at_cap + single, legitimate)
+
+    report = assemble(data_dir, legit_ratio=5.0, max_phishing_per_domain=3, now=NOW)
+
+    frame = read_dataset(data_dir)
+    kept = set(frame.loc[frame["label"] == PHISHING, "url"])
+    assert len(kept & set(big)) == 3
+    assert set(at_cap) <= kept
+    assert set(single) <= kept
+    assert len(kept) == 8
+    assert set(frame.loc[frame["label"] == LEGITIMATE, "url"]) == set(legitimate)
+    assert sum(row["legitimate_available"] for row in report["strata"]) == 8
+    assert sum(row["phishing"] for row in report["strata"]) == 8
+    assert report["totals"]["phishing"] == 8
+    assert report["totals"]["rows"] == 16
+
+
+def test_quotas_are_computed_from_the_capped_phishing(tmp_path):
+    phishing = many(10, "https://site{}.sharedhost.com/login") + many(2, "https://bad{}.example/a")
+    legitimate = many(10, "https://good{}.example/about")
+    data_dir = make_clean_run(tmp_path, phishing, legitimate)
+
+    report = assemble(data_dir, legit_ratio=0.5, max_phishing_per_domain=4, now=NOW)
+
+    row = strata(report)["path/https/no_www"]
+    assert (row["phishing"], row["quota"], row["real_taken"]) == (6, 3, 3)
+    assert report["totals"]["legitimate"] == 3
+    assert len(read_dataset(data_dir)) == 9
+
+
+def test_synthetic_trailing_slash_share_follows_the_capped_phishing(tmp_path):
+    phishing = many(6, "http://site{}.sharedhost.com/") + many(2, "http://worse{}.example")
+    data_dir = make_clean_run(tmp_path, phishing, [], many(20, "free{}.example"))
+
+    assemble(
+        data_dir, legit_ratio=1.0, max_majestic_share=1.0, max_phishing_per_domain=2, now=NOW
+    )
+
+    frame = read_dataset(data_dir)
+    synthetic = frame[frame["synthetic"]]
+    assert len(synthetic) == 4
+    assert sum(url.endswith("/") for url in synthetic["url"]) == 2
+
+
+def test_phishing_cap_is_deterministic_for_a_seed_and_any_input_row_order(tmp_path):
+    phishing = many(30, "https://site{}.sharedhost.com/login") + many(3, "https://bad{}.example/a")
+    legitimate = many(10, "https://good{}.example/about")
+    data_dir = make_clean_run(tmp_path / "sorted", phishing, legitimate)
+    shuffled_dir = make_clean_run(tmp_path / "shuffled", phishing, legitimate, row_order_seed=1)
+    options = {"legit_ratio": 0.5, "max_phishing_per_domain": 5}
+
+    first = assemble(data_dir, seed=7, now=NOW, **options)
+    again = assemble(data_dir, seed=7, now=LATER, **options)
+    shuffled = assemble(shuffled_dir, seed=7, now=NOW, **options)
+    other = assemble(data_dir, seed=8, now=datetime(2026, 11, 12, 11, tzinfo=UTC), **options)
+
+    stored = pd.read_parquet(shuffled_dir / "processed" / CLEAN_STAMP / "urls.parquet")
+    assert list(stored["url"]) != sorted(stored["url"])
+    kept = phishing_urls(data_dir)
+    assert len(kept) == 8
+    assert kept == phishing_urls(data_dir, "20261112T100000Z")
+    assert kept == phishing_urls(shuffled_dir)
+    assert kept != phishing_urls(data_dir, "20261112T110000Z")
+    assert first["content_hash"]["value"] == again["content_hash"]["value"]
+    assert first["content_hash"]["value"] == shuffled["content_hash"]["value"]
+    assert first["content_hash"]["value"] != other["content_hash"]["value"]
+
+
+def test_a_capped_domain_keeps_the_same_urls_whatever_else_is_in_the_data(tmp_path):
+    hosted = many(30, "https://site{}.sharedhost.com/login")
+    alone = make_clean_run(tmp_path / "alone", hosted, [])
+    crowded = make_clean_run(
+        tmp_path / "crowded", hosted + many(9, "https://x{}.otherhost.net/login"), []
+    )
+
+    assemble(alone, legit_ratio=0.5, max_phishing_per_domain=5, now=NOW)
+    assemble(crowded, legit_ratio=0.5, max_phishing_per_domain=5, now=NOW)
+
+    assert set(phishing_urls(alone)) == set(phishing_urls(crowded)) & set(hosted)
+
+
+@pytest.mark.parametrize("disabled", [None, 0])
+def test_disabled_phishing_cap_keeps_every_phishing_url(tmp_path, disabled):
+    phishing = many(12, "https://site{}.sharedhost.com/login") + many(2, "https://bad{}.example/")
+    legitimate = many(10, "https://good{}.example/about")
+    data_dir = make_clean_run(tmp_path, phishing, legitimate)
+
+    report = assemble(data_dir, legit_ratio=0.5, max_phishing_per_domain=disabled, now=NOW)
+
+    assert set(phishing_urls(data_dir)) == set(phishing)
+    assert strata(report)["path/https/no_www"]["quota"] == 6
+    assert report["parameters"]["max_phishing_per_domain"] is None
+    cap = report["phishing_domain_cap"]
+    assert (cap["phishing_before"], cap["phishing_after"]) == (14, 14)
+    assert (cap["domains_capped"], cap["capped_domains"]) == (0, [])
+    assert report["form_distance"]["phishing_capped"] == report["form_distance"]["before"]
+
+
+def test_report_records_the_phishing_cap_and_the_capped_domains(tmp_path):
+    phishing = (
+        many(7, "https://site{}.sharedhost.com/login")
+        + many(5, "http://www.shortlink.net/{}")
+        + many(4, "https://page{}.tie.org/login")
+        + many(4, "https://page{}.also.org/login")
+        + many(3, "https://bad{}.example/")
+    )
+    legitimate = many(6, "https://good{}.example/about") + many(6, "https://good{}.example/")
+    data_dir = make_clean_run(tmp_path, phishing, legitimate)
+
+    report = assemble(data_dir, legit_ratio=0.5, max_phishing_per_domain=2, now=NOW)
+
+    saved = json.loads(
+        (data_dir / "processed" / STAMP / "assemble_report.json").read_text(encoding="utf-8")
+    )
+    assert saved == report
+    assert report["parameters"]["max_phishing_per_domain"] == 2
+    cap = report["phishing_domain_cap"]
+    assert cap["max_per_domain"] == 2
+    assert (cap["phishing_before"], cap["phishing_after"]) == (23, 11)
+    assert cap["domains_capped"] == 4
+    assert cap["capped_domains"] == [
+        {"domain": "sharedhost.com", "rows_before": 7, "rows_kept": 2},
+        {"domain": "shortlink.net", "rows_before": 5, "rows_kept": 2},
+        {"domain": "also.org", "rows_before": 4, "rows_kept": 2},
+        {"domain": "tie.org", "rows_before": 4, "rows_kept": 2},
+    ]
+    assert len(cap["public_suffix_list_snapshot_sha256"]) == 64
+    assert report["totals"]["phishing"] == 11
+    distance = report["form_distance"]
+    # Cleaned: 15, 5 and 3 of 23 phishing URLs in three strata; legitimate 6 and 6 of 12.
+    assert distance["before"]["all_strata"] == pytest.approx(17 / 46, abs=1e-6)
+    # Capped: 6, 2 and 3 of 11 phishing URLs, against the same legitimate URLs.
+    assert distance["phishing_capped"]["all_strata"] == pytest.approx(5 / 22, abs=1e-6)
+    assert distance["phishing_capped"]["with_path"] == 0.25
+    assert distance["after"]["all_strata"] is not None
+
+
+def test_rejects_a_negative_phishing_cap(tmp_path):
+    data_dir = make_clean_run(tmp_path, many(4, "https://bad{}.example/"), [])
+
+    with pytest.raises(ValueError, match="max_phishing_per_domain"):
+        assemble(data_dir, max_phishing_per_domain=-1, now=NOW)
+    with pytest.raises(ValueError, match="max_phishing_per_domain"):
+        dry_run(data_dir, [0.5], max_phishing_per_domain=-1)
+
+
+def test_dry_run_reports_the_phishing_kept_by_the_cap(tmp_path):
+    phishing = many(10, "https://site{}.sharedhost.com/login") + many(2, "https://bad{}.example/a")
+    legitimate = many(10, "https://good{}.example/about")
+    data_dir = make_clean_run(tmp_path, phishing, legitimate)
+
+    rows = dry_run(data_dir, [0.5, 1.0], max_phishing_per_domain=4)
+    uncapped = dry_run(data_dir, [0.5], max_phishing_per_domain=None)
+
+    assert [row["phishing"] for row in rows] == [6, 6]
+    assert [row["phishing_before"] for row in rows] == [12, 12]
+    assert [row["legitimate"] for row in rows] == [3, 6]
+    assert rows[0]["max_phishing_per_domain"] == 4
+    assert rows[0]["domains_capped"] == 1
+    assert set(rows[0]["form_distance_capped"]) == {"all_strata", "with_path", "without_path"}
+    assert (uncapped[0]["phishing"], uncapped[0]["legitimate"]) == (12, 6)
+    assert [path.name for path in (data_dir / "processed").iterdir()] == [CLEAN_STAMP]
+
+
+def test_cli_passes_the_phishing_cap_to_the_dry_run_and_to_the_real_run(tmp_path, capsys):
+    phishing = many(10, "https://site{}.sharedhost.com/login") + many(2, "https://bad{}.example/a")
+    data_dir = make_clean_run(tmp_path, phishing, many(10, "https://good{}.example/about"))
+    arguments = ["--data-dir", str(data_dir), "--max-phishing-per-domain", "4"]
+
+    main([*arguments, "--dry-run", "--ratios", "0.5"])
+
+    output = capsys.readouterr().out
+    assert "phishing 12 cleaned, 6 kept" in output
+    assert [path.name for path in (data_dir / "processed").iterdir()] == [CLEAN_STAMP]
+
+    main([*arguments, "--legit-ratio", "0.5"])
+
+    output = capsys.readouterr().out
+    assert "6 phishing" in output and "sharedhost.com" in output
+    folders = [path for path in (data_dir / "processed").iterdir() if path.name != CLEAN_STAMP]
+    report = json.loads((folders[0] / "assemble_report.json").read_text(encoding="utf-8"))
+    assert report["parameters"]["max_phishing_per_domain"] == 4
+    assert report["phishing_domain_cap"]["phishing_after"] == 6

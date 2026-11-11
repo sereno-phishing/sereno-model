@@ -1,4 +1,8 @@
-"""Assemble the modelling dataset: every phishing URL plus a form-matched legitimate sample.
+"""Assemble the modelling dataset: the phishing URLs plus a form-matched legitimate sample.
+
+Phishing is first capped per registered domain: a domain with more than
+``max_phishing_per_domain`` phishing URLs keeps that many, drawn at random, so that a few shared
+hosting platforms and URL shorteners do not dominate the class. Legitimate URLs are not capped.
 
 The form stratum of a URL is the triple (has path or query, scheme, host starts with ``www.``).
 The legitimate class is sampled so that each stratum holds ``legit_ratio`` legitimate URLs per
@@ -20,17 +24,22 @@ from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
+import tldextract
 
 from sereno_model.data.acquire import ChecksumMismatchError, sha256_of
 from sereno_model.data.clean import LEGITIMATE, MAJESTIC, PHISHING, content_hash, write_parquet
+from sereno_model.data.domains import registered_domain, suffix_list_snapshot_id
 from sereno_model.data.normalize import InvalidUrlError, normalize_url, parse_url
 
 DEFAULT_SEED = 20261111
-DEFAULT_LEGIT_RATIO = 0.59
+DEFAULT_LEGIT_RATIO = 1.0
 DEFAULT_MAJESTIC_TOP_N = 100_000
 DEFAULT_MAX_MAJESTIC_SHARE = 0.25
+DEFAULT_MAX_PHISHING_PER_DOMAIN = 500
+# Capped domains listed on screen; the report always holds all of them.
+PRINTED_CAPPED_DOMAINS = 10
 DEFAULT_RATIO_NOTE = (
-    "legit_ratio was not given: the default 0.59 was chosen by the author on 2026-11-11 "
+    "legit_ratio was not given: the default 1.0 was chosen by the author on 2026-11-11 "
     "from the dry run; see docs/decisiones.md"
 )
 
@@ -62,12 +71,18 @@ DATASET_SCHEMA = pa.schema(
 
 @dataclass(frozen=True)
 class Prepared:
-    """A cleaning run indexed by form stratum, ready to be sampled with any ratio."""
+    """A cleaning run indexed by form stratum, ready to be sampled with any ratio.
+
+    ``urls``, ``phishing`` and ``phishing_trailing_slash`` describe the phishing left by the cap
+    per registered domain; ``phishing_cleaned`` counts the phishing of the cleaning run.
+    """
 
     clean_run: str
     clean_hash: str
     majestic_sha256: str
     urls: pd.DataFrame
+    phishing_cleaned: dict[Stratum, int]
+    phishing_cap: dict
     phishing: dict[Stratum, int]
     phishing_trailing_slash: dict[Stratum, int]
     legitimate: dict[Stratum, list[str]]
@@ -185,8 +200,36 @@ def _is_normalized(url: str) -> bool:
         return False
 
 
-def prepare(data_dir: Path, clean_run: str | None, majestic_top_n: int) -> Prepared:
-    """Load a cleaning run, check its content hash and index its URLs by form stratum."""
+def cap_phishing(
+    by_domain: dict[str, list[str]], cap: int | None, seed: int
+) -> tuple[set[str], list[dict]]:
+    """Phishing URLs to drop so that no registered domain keeps more than ``cap`` of them.
+
+    Each domain above the cap keeps exactly ``cap`` URLs, drawn from its sorted URLs with its
+    own stream: the draw depends on the seed, the domain and its URLs, and on nothing else.
+    Returns the dropped URLs and the capped domains, largest first.
+    """
+    dropped: set[str] = set()
+    capped = []
+    for domain, urls in by_domain.items():
+        if not cap or len(urls) <= cap:
+            continue
+        ordered = sorted(urls)
+        kept = set(_rng(seed, "phishing_cap", domain).sample(ordered, cap))
+        dropped.update(url for url in ordered if url not in kept)
+        capped.append({"domain": domain, "rows_before": len(ordered), "rows_kept": cap})
+    capped.sort(key=lambda entry: (-entry["rows_before"], entry["domain"]))
+    return dropped, capped
+
+
+def prepare(
+    data_dir: Path,
+    clean_run: str | None,
+    majestic_top_n: int,
+    max_phishing_per_domain: int | None = None,
+    seed: int = DEFAULT_SEED,
+) -> Prepared:
+    """Load a cleaning run, check its hash, cap its phishing and index its URLs by stratum."""
     run = clean_run or latest_clean_run(data_dir)
     run_dir = data_dir / "processed" / run
     recorded = json.loads((run_dir / "clean_report.json").read_text(encoding="utf-8"))
@@ -204,18 +247,45 @@ def prepare(data_dir: Path, clean_run: str | None, majestic_top_n: int) -> Prepa
         has_www=[part.host.startswith("www.") for part in parts],
         synthetic=False,
     )
+    domains: dict[str, str] = {}
+    by_domain: dict[str, list[str]] = {}
+    for url, label, part in zip(urls["url"], urls["label"], parts, strict=True):
+        if label == PHISHING:
+            if part.host not in domains:
+                domains[part.host] = registered_domain(part.host)
+            by_domain.setdefault(domains[part.host], []).append(url)
+    cap = max_phishing_per_domain or None
+    dropped, capped_domains = cap_phishing(by_domain, cap, seed)
+
+    phishing_cleaned = dict.fromkeys(STRATA, 0)
     phishing = dict.fromkeys(STRATA, 0)
     trailing_slash = dict.fromkeys(STRATA, 0)
     legitimate: dict[Stratum, list[str]] = {stratum: [] for stratum in STRATA}
     columns = (urls["url"], urls["label"], urls["has_path_or_query"], parts)
     for url, label, with_path, part in zip(*columns, strict=True):
         stratum = (bool(with_path), part.scheme, part.host.startswith("www."))
-        if label == PHISHING:
+        if label != PHISHING:
+            legitimate[stratum].append(url)
+            continue
+        phishing_cleaned[stratum] += 1
+        if url not in dropped:
             phishing[stratum] += 1
             trailing_slash[stratum] += part.path == "/"
-        else:
-            legitimate[stratum].append(url)
+    phishing_cap = {
+        "max_per_domain": cap,
+        "group_key": "registered domain of the host (Public Suffix List, ICANN suffixes only); "
+        "a host without one is its own key, without a leading 'www.'",
+        "selection": "a domain above the cap keeps max_per_domain URLs drawn from its sorted "
+        "URLs with random.Random('<seed>/phishing_cap/<domain>')",
+        "phishing_before": sum(phishing_cleaned.values()),
+        "phishing_after": sum(phishing.values()),
+        "domains_capped": len(capped_domains),
+        "capped_domains": capped_domains,
+        "tldextract": tldextract.__version__,
+        "public_suffix_list_snapshot_sha256": suffix_list_snapshot_id(),
+    }
 
+    # Hosts of dropped phishing URLs still count: they must never become legitimate URLs.
     hosts = {part.host.removeprefix("www.") for part in parts}
     domains_path = run_dir / "majestic_domains.parquet"
     candidates, stats = candidate_domains(pd.read_parquet(domains_path), hosts, majestic_top_n)
@@ -223,7 +293,9 @@ def prepare(data_dir: Path, clean_run: str | None, majestic_top_n: int) -> Prepa
         clean_run=run,
         clean_hash=recorded_hash,
         majestic_sha256=sha256_of(domains_path),
-        urls=urls,
+        urls=urls[~urls["url"].isin(dropped)],
+        phishing_cleaned=phishing_cleaned,
+        phishing_cap=phishing_cap,
         phishing=phishing,
         phishing_trailing_slash=trailing_slash,
         legitimate={stratum: sorted(found) for stratum, found in legitimate.items()},
@@ -326,7 +398,7 @@ def select(
 
 
 def build_dataset(prepared: Prepared, selection: Selection) -> pd.DataFrame:
-    """All phishing rows, the selected real legitimate rows and the synthetic ones, by URL."""
+    """Capped phishing rows, the selected real legitimate rows and the synthetic ones, by URL."""
     urls = prepared.urls
     real = urls[(urls["label"] == PHISHING) | urls["url"].isin(selection.real_urls)]
     synthetic = pd.DataFrame(
@@ -397,20 +469,34 @@ def summarize(prepared: Prepared, selection: Selection) -> dict:
         },
         "form_distance": {
             "metric": "total variation distance between the phishing and legitimate form "
-            "distributions; with_path and without_path are conditional on that group",
-            "before": form_distance(phishing, before),
+            "distributions; with_path and without_path are conditional on that group. before: "
+            "all cleaned phishing against all cleaned legitimate URLs; phishing_capped: phishing "
+            "after the cap per registered domain against all cleaned legitimate URLs; after: "
+            "capped phishing against the legitimate URLs of the dataset",
+            "before": form_distance(prepared.phishing_cleaned, before),
+            "phishing_capped": form_distance(phishing, before),
             "after": form_distance(phishing, after),
         },
+        "phishing_domain_cap": prepared.phishing_cap,
     }
 
 
-def _check_parameters(legit_ratio: float, majestic_top_n: int, max_majestic_share: float) -> None:
+def _check_parameters(
+    legit_ratio: float,
+    majestic_top_n: int,
+    max_majestic_share: float,
+    max_phishing_per_domain: int | None,
+) -> None:
     if not legit_ratio > 0:
         raise ValueError(f"legit_ratio must be positive, got {legit_ratio}")
     if majestic_top_n < 0:
         raise ValueError(f"majestic_top_n must not be negative, got {majestic_top_n}")
     if not 0 <= max_majestic_share <= 1:
         raise ValueError(f"max_majestic_share must be within [0, 1], got {max_majestic_share}")
+    if max_phishing_per_domain is not None and max_phishing_per_domain < 0:
+        raise ValueError(
+            f"max_phishing_per_domain must not be negative, got {max_phishing_per_domain}"
+        )
 
 
 def assemble(
@@ -420,16 +506,18 @@ def assemble(
     seed: int = DEFAULT_SEED,
     majestic_top_n: int = DEFAULT_MAJESTIC_TOP_N,
     max_majestic_share: float = DEFAULT_MAX_MAJESTIC_SHARE,
+    max_phishing_per_domain: int | None = DEFAULT_MAX_PHISHING_PER_DOMAIN,
     now: datetime | None = None,
 ) -> dict:
     """Write ``dataset.parquet`` and ``assemble_report.json`` to a new ``processed/`` folder.
 
     The newest cleaning run is used unless ``clean_run`` names one. Its ``urls.parquet`` must
     reproduce the content hash of its report. An existing output folder is never overwritten.
+    ``max_phishing_per_domain`` set to ``None`` or 0 keeps every phishing URL.
     """
     ratio = DEFAULT_LEGIT_RATIO if legit_ratio is None else legit_ratio
-    _check_parameters(ratio, majestic_top_n, max_majestic_share)
-    prepared = prepare(data_dir, clean_run, majestic_top_n)
+    _check_parameters(ratio, majestic_top_n, max_majestic_share, max_phishing_per_domain)
+    prepared = prepare(data_dir, clean_run, majestic_top_n, max_phishing_per_domain, seed)
     selection = select(prepared, ratio, seed, max_majestic_share)
     frame = build_dataset(prepared, selection)
 
@@ -453,6 +541,7 @@ def assemble(
             "seed": seed,
             "majestic_top_n": majestic_top_n,
             "max_majestic_share": max_majestic_share,
+            "max_phishing_per_domain": max_phishing_per_domain or None,
         },
         **summarize(prepared, selection),
         "versions": {
@@ -479,17 +568,22 @@ def dry_run(
     seed: int = DEFAULT_SEED,
     majestic_top_n: int = DEFAULT_MAJESTIC_TOP_N,
     max_majestic_share: float = DEFAULT_MAX_MAJESTIC_SHARE,
+    max_phishing_per_domain: int | None = DEFAULT_MAX_PHISHING_PER_DOMAIN,
 ) -> list[dict]:
     """Summarize what each ratio would produce, without writing anything."""
     for ratio in ratios:
-        _check_parameters(ratio, majestic_top_n, max_majestic_share)
-    prepared = prepare(data_dir, clean_run, majestic_top_n)
+        _check_parameters(ratio, majestic_top_n, max_majestic_share, max_phishing_per_domain)
+    prepared = prepare(data_dir, clean_run, majestic_top_n, max_phishing_per_domain, seed)
     summaries = []
     for ratio in ratios:
         summary = summarize(prepared, select(prepared, ratio, seed, max_majestic_share))
+        cap = summary["phishing_domain_cap"]
         summaries.append(
             {
                 "legit_ratio": ratio,
+                "max_phishing_per_domain": cap["max_per_domain"],
+                "phishing_before": cap["phishing_before"],
+                "domains_capped": cap["domains_capped"],
                 "phishing": summary["totals"]["phishing"],
                 "legitimate": summary["totals"]["legitimate"],
                 "synthetic": summary["totals"]["legitimate_synthetic"],
@@ -505,6 +599,7 @@ def dry_run(
                 },
                 "form_distance": summary["form_distance"]["after"],
                 "form_distance_before": summary["form_distance"]["before"],
+                "form_distance_capped": summary["form_distance"]["phishing_capped"],
             }
         )
     return summaries
@@ -514,18 +609,43 @@ def _text(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
 
-def _print_dry_run(summaries: list[dict]) -> None:
-    before = summaries[0]["form_distance_before"]
-    print(
-        f"phishing {summaries[0]['phishing']}; form distance before sampling: "
-        f"all {_text(before['all_strata'])}, with path {_text(before['with_path'])}, "
-        f"without path {_text(before['without_path'])}"
+def _cap_text(cap: int | None, before: int, after: int, domains: int) -> str:
+    if cap is None:
+        return f"phishing {before} cleaned, {after} kept (no cap per registered domain)"
+    return (
+        f"phishing {before} cleaned, {after} kept with at most {cap} per registered domain "
+        f"({domains} domains capped)"
     )
-    header = ("ratio", "legitimate", "synthetic", "syn_share", "borrowed", "shortfall")
+
+
+def _distance_text(distances: dict) -> str:
+    return (
+        f"all {_text(distances['all_strata'])}, with path {_text(distances['with_path'])}, "
+        f"without path {_text(distances['without_path'])}"
+    )
+
+
+def _print_dry_run(summaries: list[dict]) -> None:
+    first = summaries[0]
+    print(
+        _cap_text(
+            first["max_phishing_per_domain"],
+            first["phishing_before"],
+            first["phishing"],
+            first["domains_capped"],
+        )
+    )
+    print(f"form distance before the cap: {_distance_text(first['form_distance_before'])}")
+    print(
+        "form distance after the cap, before sampling: "
+        f"{_distance_text(first['form_distance_capped'])}"
+    )
+    header = ("ratio", "phishing", "legitimate", "synthetic", "syn_share", "borrowed", "shortfall")
     print(" ".join(f"{name:>10}" for name in (*header, "tvd_all", "tvd_path", "tvd_nopath")))
     for row in summaries:
         cells = [
             f"{row['legit_ratio']:g}",
+            str(row["phishing"]),
             str(row["legitimate"]),
             str(row["synthetic"]),
             _text(row["synthetic_share"]),
@@ -547,6 +667,19 @@ def _print_report(report: dict, data_dir: Path) -> None:
     print(f"cleaning run {report['clean_run']['dir']}, legit_ratio {parameters['legit_ratio']:g}")
     if parameters["legit_ratio_note"]:
         print(f"note: {parameters['legit_ratio_note']}")
+    cap = report["phishing_domain_cap"]
+    print(
+        _cap_text(
+            cap["max_per_domain"],
+            cap["phishing_before"],
+            cap["phishing_after"],
+            cap["domains_capped"],
+        )
+    )
+    for entry in cap["capped_domains"][:PRINTED_CAPPED_DOMAINS]:
+        print(f"  {entry['domain']:<28} {entry['rows_before']:>6} -> {entry['rows_kept']:>6}")
+    if cap["domains_capped"] > PRINTED_CAPPED_DOMAINS:
+        print(f"  ... and {cap['domains_capped'] - PRINTED_CAPPED_DOMAINS} more in the report")
     for row in report["strata"]:
         print(
             f"{row['stratum']:<22} phishing {row['phishing']:>6} quota {row['quota']:>6} "
@@ -567,13 +700,8 @@ def _print_report(report: dict, data_dir: Path) -> None:
         )
     if synthetic["candidates_exhausted"]:
         print("Majestic candidates exhausted")
-    for moment in ("before", "after"):
-        distances = report["form_distance"][moment]
-        print(
-            f"form distance {moment}: all {_text(distances['all_strata'])}, "
-            f"with path {_text(distances['with_path'])}, "
-            f"without path {_text(distances['without_path'])}"
-        )
+    for moment in ("before", "phishing_capped", "after"):
+        print(f"form distance {moment}: {_distance_text(report['form_distance'][moment])}")
     print(f"content sha256 {report['content_hash']['value']}")
     print(f"report: {(data_dir / report['output_dir'] / 'assemble_report.json').as_posix()}")
 
@@ -586,6 +714,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--majestic-top-n", type=int, default=DEFAULT_MAJESTIC_TOP_N)
     parser.add_argument("--max-majestic-share", type=float, default=DEFAULT_MAX_MAJESTIC_SHARE)
+    parser.add_argument(
+        "--max-phishing-per-domain",
+        type=int,
+        default=DEFAULT_MAX_PHISHING_PER_DOMAIN,
+        help="phishing URLs kept per registered domain; 0 keeps them all",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print a summary, write nothing")
     parser.add_argument("--ratios", help="comma-separated ratios for --dry-run")
     args = parser.parse_args(argv)
@@ -595,6 +729,7 @@ def main(argv: list[str] | None = None) -> None:
         "seed": args.seed,
         "majestic_top_n": args.majestic_top_n,
         "max_majestic_share": args.max_majestic_share,
+        "max_phishing_per_domain": args.max_phishing_per_domain,
     }
     if args.dry_run:
         default = [DEFAULT_LEGIT_RATIO if args.legit_ratio is None else args.legit_ratio]
