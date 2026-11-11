@@ -200,7 +200,7 @@ El tope se aplica en `assemble`, antes de calcular las cuotas de legítimas. Rec
 
 Con menos phishing, la proporción pasa a 1.0 legítimas por cada URL de phishing. Sigue el mismo criterio que antes: la mayor proporción sin faltantes, que usa casi todas las legítimas con ruta e incluye Majestic Million, sin pasar de clases parejas.
 
-Corridas `20261111T222505Z` (conjunto) y `20261111T222515Z` (partición), con cambios sin commit: orientan la fase y no se citan.
+Corridas `20261111T222725Z` (conjunto) y `20261111T222736Z` (partición), sobre el commit `aaef0a8` y con el repositorio limpio, con semilla 20261111. Hash del conjunto: `b3a2e8994c11aeb0e94e8c306e206df664ffcd29eb04e7e15135d449837b5f9c`. Hash de la partición: `d7121875adbdf535a121c23afc4958f3e4b0b35e5b76a6811019948a55f89edc`. Dos corridas anteriores al commit dieron los mismos hashes.
 
 | | URL | Phishing | Legítimas | De Majestic | Grupos |
 |---|---|---|---|---|---|
