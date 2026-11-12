@@ -36,9 +36,9 @@ Definir el vector de características de una URL e implementar su extracción en
 | Características de host: solo desde el texto de la URL, o también con DNS o WHOIS | Decidido el 2026-11-11: solo desde el texto; ver `decisiones.md` |
 | Lista de características del vector, con nombre y definición | Aprobada por Andrés el 2026-11-11; ver «Vector base» |
 | Características que dependen de una lista (palabras sospechosas, acortadores, marcas, TLD sospechoso) | Fuera del vector base; se agregan después como un paso medido aparte |
-| Extracción en un paquete único, con pruebas | En curso |
+| Extracción en un paquete único, con pruebas | Hecho el 2026-11-11; ver el registro |
 | Control de sesgo de fuente sobre el vector | Pendiente |
-| Matrices de entrenamiento y de prueba con hash y reporte | Pendiente |
+| Matrices de entrenamiento y de prueba con hash y reporte | Hecho el 2026-11-11; corrida `20261112T023011Z` |
 
 ## Vector base
 
@@ -193,4 +193,35 @@ Pasa a la integración: `InvalidUrlError` incluye la URL en su mensaje. Si el se
 
 No se comprobó: que los valores decimales sean idénticos en otro equipo, ni que `sereno-backend` pueda importar el extractor.
 
-Pendiente: corrida oficial de las matrices sobre código con commit y control de sesgo de fuente.
+### 2026-11-11: matrices oficiales
+
+Corrida `20261112T023011Z` (hora UTC), sobre el commit `fe084db` y con el repositorio limpio. Entrada: partición `20261111T222736Z`, con su hash comprobado. Vector versión 1, 24 características. Reporte en `data/processed/20261112T023011Z/features_report.json`.
+
+| | URL | Phishing | Legítimas | Hash del contenido |
+|---|---|---|---|---|
+| Entrenamiento | 64,423 | 32,212 | 32,211 | `3481745f29c5f9c379845bd749ea257c50c6b00c5f18a3ff448f99d087f0a068` |
+| Prueba | 16,107 | 8,053 | 8,054 | `a6a0721edfabaf2a7e31cc49de2ad2c552217c9a81bc4438b447ea40428427f3` |
+
+Dos corridas anteriores al commit, con `--dry-run`, dieron los mismos hashes. La extracción tardó 1.9 s para las 80,530 URL, unos 0.02 ms por URL en un hilo.
+
+Estadísticas del reporte, calculadas solo con entrenamiento. La prueba no se resume.
+
+| Característica | Mediana, phishing | Mediana, legítimas | Distinta de cero, phishing | Distinta de cero, legítimas |
+|---|---|---|---|---|
+| `url_length` | 32 | 21 | 100 % | 100 % |
+| `host_length` | 20 | 13 | 100 % | 100 % |
+| `dot_count` | 2 | 1 | 100 % | 100 % |
+| `url_entropy` | 4.04 | 3.67 | 100 % | 100 % |
+| `subdomain_count` | 1 | 0 | 59.0 % | 16.8 % |
+| `digit_count` | 1 | 0 | 59.2 % | 11.2 % |
+| `host_hyphen_count` | 0 | 0 | 35.4 % | 10.9 % |
+| `query_length` | 0 | 0 | 14.9 % | 5.4 % |
+| `path_length` | 7 | 5 | 90.8 % | 90.8 % |
+| `has_at` | 0 | 0 | 1.2 % | 0.02 % |
+| `has_double_slash` | 0 | 0 | 2.4 % | 0.1 % |
+| `host_is_ip` | 0 | 0 | 0.3 % | 0.01 % |
+| `has_port` | 0 | 0 | 0.05 % | 0.05 % |
+
+Estas diferencias todavía no se interpretan como señal de phishing: parte puede venir de la fuente de cada clase. Eso lo decide el control de sesgo de fuente.
+
+Pendiente: control de sesgo de fuente sobre estas matrices.
