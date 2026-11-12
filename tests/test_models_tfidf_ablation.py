@@ -11,10 +11,10 @@ from test_models_stacking import synthetic_matrix
 from test_models_train import make_features_run
 
 from sereno_model.data.normalize import parse_url
-from sereno_model.features.extract import FEATURE_NAMES, measured_text
+from sereno_model.features.extract import FEATURE_NAMES, features_from_parts, measured_text
 from sereno_model.models import tfidf_ablation as module
 from sereno_model.data.split import make_folds
-from sereno_model.models.stacking import BASE_MODEL_NAMES, cross_validate
+from sereno_model.models.stacking import BASE_MODEL_NAMES, StackingModel, cross_validate
 from sereno_model.models.tfidf_ablation import (
     TEXT_COLUMN,
     VARIANTS,
@@ -144,6 +144,36 @@ def test_sparse_pipeline_works_with_every_base_model(name):
     scores = pipeline.predict_proba(X)[:, 1]
     assert scores.shape == (len(frame),)
     assert np.all((scores >= 0) & (scores <= 1))
+
+
+@pytest.mark.parametrize("with_vector", [True, False])
+def test_refit_best_builds_the_saved_model_class(with_vector):
+    frame = _text_frame()
+    y = frame["label"].to_numpy().astype(int)
+    folds = make_folds(y, frame["group"], n_splits=3, seed=0, strategy="random")
+    cv = cross_validate(
+        model_inputs(frame, with_vector), y, folds, search_spaces=TINY_SPACES, n_iter=1, seed=0,
+        n_jobs=1, threshold_grid=[0.5],
+        estimator_factory=lambda name, seed: tfidf_estimator(name, seed, (1, 3), with_vector),
+    )
+    spec = {"with_vector": with_vector, "ngram_range": (1, 3), "grouped": False}
+
+    model, _ = module.refit_best(frame, cv, spec, seed=0)
+
+    assert type(model) is StackingModel
+    assert model.ngram_range == (1, 3)
+    assert model.threshold == cv.threshold["threshold"]
+    for url in frame["url"][:5]:
+        parts = parse_url(url)
+        row = {TEXT_COLUMN: measured_text(parts)}
+        row.update(zip(FEATURE_NAMES, features_from_parts(parts), strict=True))
+        matrix = model.features.transform(pd.DataFrame([row]))
+        meta = np.array([[m.predict_proba(matrix)[0, 1] for m in model.base_models.values()]])
+        assert model.score_url(url) == float(model.meta_model.predict_proba(meta)[0, 1])
+
+
+def test_the_ablation_has_no_model_class_of_its_own():
+    assert not hasattr(module, "TfidfStacking")
 
 
 def test_text_only_inputs_hold_no_vector_feature():

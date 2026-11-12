@@ -42,10 +42,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from sereno_model.data.normalize import parse_url
 from sereno_model.data.split import TRAIN
 from sereno_model.features.build import git_state, matrix_file
-from sereno_model.features.extract import FEATURE_NAMES, features_from_parts, measured_text
 from sereno_model.models.diagnose import (
     _official_reference,
     capped_domains,
@@ -59,6 +57,7 @@ from sereno_model.models.stacking import (  # noqa: F401 (re-exported building b
     DEFAULT_N_SPLITS,
     DEFAULT_SEED,
     DEFAULT_THRESHOLD_STEP,
+    FEATURE_SET_VERSION,
     FOLD_GROUPED,
     FOLD_RANDOM,
     LATENCY_SEED_OFFSET,
@@ -66,6 +65,7 @@ from sereno_model.models.stacking import (  # noqa: F401 (re-exported building b
     MODEL_STEP,
     SEARCH_SPACES,
     TEXT_COLUMN,
+    StackingModel,
     base_estimator,
     cross_validate,
     feature_columns,
@@ -146,28 +146,7 @@ def _delta(entry: dict, reference: dict) -> dict:
     return delta
 
 
-class TfidfStacking:
-    """The refitted best variant: one feature union, three base models, meta-model, threshold."""
-
-    def __init__(self, features, base_models: dict, meta_model, threshold: float):
-        self.features = features
-        self.base_models = base_models
-        self.meta_model = meta_model
-        self.threshold = float(threshold)
-
-    def score_url(self, url: str) -> float:
-        """Phishing probability of one URL, from its text alone."""
-        parts = parse_url(url)
-        row = {TEXT_COLUMN: measured_text(parts)}
-        row.update(zip(FEATURE_NAMES, features_from_parts(parts), strict=True))
-        matrix = self.features.transform(pd.DataFrame([row]))
-        meta = np.array(
-            [[model.predict_proba(matrix)[0, 1] for model in self.base_models.values()]]
-        )
-        return float(self.meta_model.predict_proba(meta)[0, 1])
-
-
-def refit_best(frame: pd.DataFrame, cv, spec: dict, seed: int) -> tuple[TfidfStacking, float]:
+def refit_best(frame: pd.DataFrame, cv, spec: dict, seed: int) -> tuple[StackingModel, float]:
     """Refit the feature union and the tuned base models on every training row (as 1.0.0 does).
 
     One fitted union serves the three models: the vectorizer is deterministic, so it equals the
@@ -184,7 +163,15 @@ def refit_best(frame: pd.DataFrame, cv, spec: dict, seed: int) -> tuple[TfidfSta
         for name in BASE_MODEL_NAMES
     }
     meta_model = meta_estimator(seed).fit(cv.meta_features, y)
-    model = TfidfStacking(features, base_models, meta_model, cv.threshold["threshold"])
+    model = StackingModel(
+        base_models,
+        meta_model,
+        cv.threshold["threshold"],
+        feature_columns(frame) if spec["with_vector"] else [],
+        FEATURE_SET_VERSION,
+        features=features,
+        ngram_range=spec["ngram_range"],
+    )
     return model, round(time.perf_counter() - started, 3)
 
 

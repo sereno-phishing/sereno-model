@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
@@ -267,3 +270,34 @@ def test_model_scores_raw_urls_like_the_feature_matrix():
     assert model.score_url(urls[0]) == pytest.approx(from_matrix[0])
     assert np.array_equal(model.predict(urls), (from_matrix >= model.threshold).astype(int))
     assert np.allclose(model.predict_proba(urls)[:, 1], from_matrix)
+
+
+@pytest.mark.parametrize("ngram_range", [OFFICIAL_NGRAM_RANGE, None])
+def test_a_pickled_stacking_model_reloads_and_scores_the_same(tmp_path, ngram_range):
+    frame = extracted_matrix()
+    model = fit_stacking(
+        frame, threshold_grid=[0.5], ngram_range=ngram_range, **small_search()
+    ).model
+    path = tmp_path / "model.joblib"
+    joblib.dump(model, path)
+
+    reloaded = joblib.load(path)
+
+    assert type(reloaded) is StackingModel
+    assert vars(reloaded).keys() == vars(model).keys()
+    urls = list(frame["url"][:20])
+    assert np.array_equal(reloaded.score(urls), model.score(urls))
+    assert reloaded.score_url(urls[0]) == model.score_url(urls[0])
+
+
+SAVED_MODELS = sorted((Path(__file__).resolve().parents[1] / "artifacts").glob("*/model.joblib"))
+
+
+@pytest.mark.skipif(not SAVED_MODELS, reason="no saved model in artifacts/ of this checkout")
+@pytest.mark.parametrize("path", SAVED_MODELS, ids=lambda path: path.parent.name)
+def test_every_saved_model_still_loads_and_scores(path):
+    model = joblib.load(path)
+
+    assert type(model) is StackingModel
+    score = model.score_url("https://example.com/login")
+    assert 0.0 <= score <= 1.0
