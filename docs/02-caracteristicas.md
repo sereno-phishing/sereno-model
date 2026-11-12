@@ -37,8 +37,8 @@ Definir el vector de características de una URL e implementar su extracción en
 | Lista de características del vector, con nombre y definición | Aprobada por Andrés el 2026-11-11; ver «Vector base» |
 | Características que dependen de una lista (palabras sospechosas, acortadores, marcas, TLD sospechoso) | Fuera del vector base; se agregan después como un paso medido aparte |
 | Extracción en un paquete único, con pruebas | Hecho el 2026-11-11; ver el registro |
-| Control de sesgo de fuente sobre el vector | Ejecutado el 2026-11-11, corrida `20261112T024408Z`: falla con umbrales propios; falta sustento del corpus y la decisión de Andrés |
-| Matrices de entrenamiento y de prueba con hash y reporte | Hecho el 2026-11-11; corrida `20261112T023011Z` |
+| Control de sesgo de fuente sobre el vector | Ejecutado el 2026-11-11 sobre las dos versiones del vector; la fuente sigue siendo identificable. Se reporta como diagnóstico y limitación declarada, sin umbrales |
+| Matrices de entrenamiento y de prueba con hash y reporte | Hecho el 2026-11-11; corrida `20261112T025607Z` (versión 2) |
 
 ## Vector base
 
@@ -99,7 +99,7 @@ Quedan fuera del vector base, además del esquema y el «www.», las caracterís
 - Cada característica del vector tiene nombre, definición y origen documentados.
 - La extracción vive en un solo paquete, es determinista y tiene pruebas; el servidor de inferencia puede importarla sin cambios.
 - Las matrices de entrenamiento y de prueba salen de un script, sobre código con commit, con hash y reporte guardado.
-- Los controles de `control-fuga-datos` que aplican a las características están ejecutados y guardados, incluido el de sesgo de fuente.
+- Los controles de `control-fuga-datos` que aplican a las características están ejecutados y guardados, incluido el de sesgo de fuente, que se reporta como diagnóstico.
 - La pregunta abierta sobre las características de host está cerrada en `00-trazabilidad-arquitectura.md`.
 - Andrés explicó la fase con sus palabras.
 
@@ -305,8 +305,59 @@ Consecuencia: el veredicto de «falla» del control anterior se apoya en umbrale
 
 Decisión de Andrés: las barras con que termina la URL no se miden, como hacen Ghalechyan et al. (2024) y P30, y se vuelven a correr las matrices y el control. Ver `decisiones.md`.
 
-Propuesto y sin confirmar por Andrés: reportar el control como diagnóstico y limitación declarada, sin umbrales de pasa o falla; medir el efecto de la fuente en la Fase 3 probando con otra fuente, como P20; y no agregar Common Crawl por ahora.
+Propuesto en ese momento y confirmado después por Andrés (ver la entrada siguiente): reportar el control como diagnóstico y limitación declarada, sin umbrales de pasa o falla; medir el efecto de la fuente en la Fase 3 probando con otra fuente, como P20; y no agregar Common Crawl por ahora.
 
 El cambio afecta a `url_length`, `path_length`, `slash_count`, `has_double_slash` y `url_entropy`. El vector pasa a la versión 2 y las matrices de la versión 1 (corrida `20261112T023011Z`) quedan reemplazadas.
 
-Pendiente: matrices y control de la versión 2 sobre código con commit.
+### 2026-11-11: matrices y control de la versión 2
+
+Ambas corridas sobre el commit `2498a69`, con el repositorio limpio y la misma partición `20261111T222736Z`.
+
+Matrices, corrida `20261112T025607Z`, vector versión 2. Reporte en `data/processed/20261112T025607Z/features_report.json`.
+
+| | URL | Phishing | Legítimas | Hash del contenido |
+|---|---|---|---|---|
+| Entrenamiento | 64,423 | 32,212 | 32,211 | `308d6b88e7c45d1aa4e08a22c1a5fe9cc2ef08017a7cab27c38da716fd9a41eb` |
+| Prueba | 16,107 | 8,053 | 8,054 | `844e539533b2055ad0252dcb20ef8326f582f4f1f7b117bcc6cf6c8f18f920da` |
+
+Control de fuente, corrida `20261112T025610Z`, con la misma sonda y la misma semilla que la corrida `20261112T024408Z` de la versión 1. Reporte en `data/processed/20261112T025610Z/source_bias_report.json`. Es exploración con validación cruzada sobre entrenamiento; la prueba no se abre.
+
+| Estrato | Objetivo | AUC, versión 1 | AUC, versión 2 |
+|---|---|---|---|
+| Legítimas sin ruta | Esquema | 0.656 | 0.539 |
+| Legítimas sin ruta | «www.» | 0.616 | 0.621 |
+| Legítimas sin ruta | Fuente: Hannousse | 0.781 | 0.790 |
+| Legítimas sin ruta | Fuente: Majestic Million | 0.702 | 0.690 |
+| Legítimas sin ruta | Fuente: Dam Minh | 0.667 | 0.660 |
+| Legítimas con ruta | Esquema | 0.702 | 0.699 |
+| Legítimas con ruta | «www.» | 0.780 | 0.777 |
+| Legítimas con ruta | Fuente: Hannousse | 0.912 | 0.912 |
+| Legítimas con ruta | Fuente: Dam Minh | 0.913 | 0.912 |
+| Phishing sin ruta | Esquema | 0.818 | 0.717 |
+| Phishing sin ruta | «www.» | 0.816 | 0.803 |
+| Phishing sin ruta | Fuente: Hannousse | 0.709 | 0.701 |
+| Phishing sin ruta | Fuente: PhishTank | 0.644 | 0.640 |
+| Phishing sin ruta | Fuente: Dam Minh | 0.658 | 0.652 |
+| Phishing con ruta | Esquema | 0.802 | 0.788 |
+| Phishing con ruta | «www.» | 0.869 | 0.873 |
+| Phishing con ruta | Fuente: Hannousse | 0.826 | 0.822 |
+| Phishing con ruta | Fuente: PhishTank | 0.769 | 0.761 |
+| Phishing con ruta | Fuente: Dam Minh | 0.619 | 0.622 |
+
+Quitar la barra final bajó el AUC del esquema en las URL sin ruta: de 0.656 a 0.539 en las legítimas y de 0.818 a 0.717 en el phishing. En las URL con ruta casi no cambia. El «www.» y la fuente siguen igual: no dependían de la barra.
+
+Lo que queda sin corregir:
+
+- Las dos colecciones de legítimas con ruta se distinguen entre sí con un AUC de 0.91, por la longitud de la URL y de la ruta.
+- El «www.» se recupera dentro del phishing con un AUC de 0.80 a 0.87, por el número de subdominios y de puntos.
+- El esquema se recupera dentro del phishing con ruta con un AUC de 0.79.
+
+El control mide que la fuente se puede identificar; no mide cuánto de la separación entre phishing y legítimas se debe a la fuente.
+
+### 2026-11-11: el control queda como diagnóstico
+
+Decisión de Andrés: el control de fuente se reporta como diagnóstico y como limitación declarada, sin umbrales de pasa o falla, porque ningún paper del corpus los tiene. El efecto de la fuente sobre el modelo se mide en la Fase 3 entrenando con una fuente y probando con otra, como P20. No se agrega Common Crawl por ahora. Ver `decisiones.md`.
+
+Los reportes de las corridas `20261112T024408Z` y `20261112T025610Z` traen las etiquetas de pasa, se revisa y falla de los umbrales descartados. Sus AUC son válidos; las etiquetas no se usan. El script se cambia para que deje de emitirlas y el control de la versión 2 se vuelve a correr.
+
+Pendiente: control sin etiquetas sobre código con commit y explicación de Andrés.

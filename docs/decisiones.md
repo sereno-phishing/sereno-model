@@ -97,7 +97,7 @@ Las barras con que termina la URL no se miden en el vector, que pasa a la versi�
 
 Los umbrales de 0.65 y 0.80 de ese control eran un diseño propio sin sustento en el corpus, donde ningún paper mide si la fuente se puede identificar.
 
-Queda propuesto y sin confirmar por Andrés:
+Decisión de Andrés, confirmada el mismo día:
 
 - Reportar el control como diagnóstico y como limitación declarada, sin puerta de pasa o falla.
 - Medir el efecto de la fuente en la Fase 3 entrenando con una fuente y probando con otra, como P20, que reporta una caída de 94.46 % a 80 % de exactitud.
