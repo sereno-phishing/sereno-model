@@ -6,7 +6,7 @@ Corresponde a la "Estación de entrenamiento" del despliegue del ADD. Este repos
 
 ## Estado
 
-Conjunto de datos limpio y partición fija de entrenamiento y prueba listos; aún sin características ni modelo real. Fase 1 (datos) cerrada; sigue la Fase 2, características. Instalación en `docs/00-entorno.md`.
+Conjunto de datos limpio, partición fija y matrices de características (vector versión 2, 24 características) listos; aún sin modelo real. Fases 1 (datos) y 2 (características) cerradas; sigue la Fase 3, modelos. Instalación en `docs/00-entorno.md`.
 
 ## Documentación
 

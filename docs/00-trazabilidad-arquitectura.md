@@ -46,3 +46,5 @@ Fuente: ADD OE2 (secciones del componente de IA, Tablas 3, 5, 10 y 11, Figura 25
 ## Decidido en la Fase 2, compatible con el ADD
 
 - Las características de host se calculan solo desde el texto de la URL, sin DNS, WHOIS ni otros servicios externos. El ADD pide características intrínsecas (Tabla 10, RES-01) y no menciona esas consultas.
+- El vector tiene 24 características (versión 2), definidas en `02-caracteristicas.md`. No mide el esquema, el «www.» ni las barras con que termina la URL.
+- La definición única del vector (RF-04) vive en `src/sereno_model/features/extract.py`, que solo necesita la biblioteca estándar y `tldextract`.

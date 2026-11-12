@@ -1,6 +1,6 @@
 # Fase 2: características
 
-Estado: abierta el 2026-11-11.
+Estado: cerrada el 2026-11-11. Abierta el 2026-11-11.
 
 ## Objetivo
 
@@ -360,4 +360,47 @@ Decisión de Andrés: el control de fuente se reporta como diagnóstico y como l
 
 Los reportes de las corridas `20261112T024408Z` y `20261112T025610Z` traen las etiquetas de pasa, se revisa y falla de los umbrales descartados. Sus AUC son válidos; las etiquetas no se usan. El script se cambia para que deje de emitirlas y el control de la versión 2 se vuelve a correr.
 
-Pendiente: control sin etiquetas sobre código con commit y explicación de Andrés.
+### 2026-11-11: control de la versión 2 sin etiquetas
+
+Corrida `20261112T030430Z`, sobre el commit `fb516b8` y con el repositorio limpio, con la misma matriz de entrenamiento (`308d6b88…`), la misma sonda y la misma semilla. Reporte en `data/processed/20261112T030430Z/source_bias_report.json`. Es el reporte que se cita para el control de la versión 2: ya no trae etiquetas de pasa o falla.
+
+Los 19 AUC son idénticos a los de la corrida `20261112T025610Z`, columna «AUC, versión 2» de la tabla anterior.
+
+| Objetivo | Mediciones | AUC mínimo | AUC mediano | AUC máximo | Dónde está el máximo |
+|---|---|---|---|---|---|
+| Esquema | 4 | 0.539 | 0.708 | 0.788 | Phishing con ruta |
+| «www.» | 4 | 0.621 | 0.790 | 0.873 | Phishing con ruta |
+| Fuente | 11 | 0.622 | 0.701 | 0.912 | Legítimas con ruta, Dam Minh |
+
+Pruebas: 292 en verde.
+
+## Revisión de Andrés
+
+2026-11-11. Andrés explicó la fase en tres rondas.
+
+- Vector: «un arreglo de números que es lo que va a leer el modelo». Al inicio no dijo por qué el servidor usa el mismo código que el entrenamiento; después lo explicó así: para que todo sea homogéneo y no haya valores distintos de una misma URL en los dos lados.
+- DNS y WHOIS: quedan fuera porque el Charter limita el proyecto a lo intrínseco de la URL. Se comprobó en el Charter (alcance tecnológico) y en el ADD (Tabla 10, RES-01). Se le añadió el motivo de la fuga: un dominio de phishing antiguo ya caído enseñaría al modelo que un dominio caído es phishing.
+- Control de fuente: al inicio no supo explicarlo. Tras la explicación con el ejemplo del «color del papel», lo dijo así: sirve para que el modelo no diga «esto es phishing porque está viniendo de acá» y decida por la URL; la barra final no dice nada del phishing, pero igual mueve el valor, así que se quita como en algunos papers.
+
+Precisiones que se le hicieron y quedan anotadas: el control mide y no oculta, y la fuente todavía se puede identificar (AUC de hasta 0.91); la barra final afectaba porque cada fuente la escribe distinto.
+
+## Cierre
+
+Fase cerrada el 2026-11-11. Criterios de salida:
+
+- Las 24 características del vector versión 2 tienen nombre, definición y papers del corpus en «Vector base».
+- La extracción vive en `src/sereno_model/features/extract.py`, es determinista, tiene pruebas y solo usa la biblioteca estándar y `tldextract`. No se comprobó importándola desde `sereno-backend`; eso pasa a la integración.
+- Las matrices salen de `python -m sereno_model.features.build`, corrida `20261112T025607Z` sobre el commit `2498a69`, con hash y reporte.
+- El control de sesgo de fuente está ejecutado y guardado, corrida `20261112T030430Z` sobre el commit `fb516b8`, y se reporta como diagnóstico. Los controles de duplicados, dominios, forma y fechas son de la Fase 1; los de importancia y estabilidad necesitan un modelo.
+- La pregunta sobre las características de host está cerrada en `00-trazabilidad-arquitectura.md`.
+- Andrés explicó la fase.
+
+Pasan a las fases siguientes:
+
+- La fuente y el «www.» todavía se pueden identificar desde el vector. En la Fase 3 se mide el efecto entrenando con una fuente y probando con otra, como P20.
+- Las características que dependen de una lista, como paso medido aparte.
+- Los controles de importancia y de estabilidad.
+- Las limitaciones declaradas del extractor: hosts internacionales en Unicode o en punycode, punto final en el host y puertos con ceros a la izquierda.
+- En la integración: comprobar que `sereno-backend` importa el extractor y que no registra la URL del mensaje de `InvalidUrlError` (RNF-05).
+- De la Fase 1: el Cisco End User License Agreement de PhishTank sin leer y OpenPhish en pausa.
+
