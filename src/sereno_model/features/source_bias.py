@@ -7,8 +7,13 @@ model could be learning the source instead of phishing.
 
 Every probe runs inside one class and one shape (with or without a path or query), so neither
 the class nor the presence of a path can explain the result. The probe is validated with folds
-grouped by registered domain and only its out-of-fold predictions are scored. The design and
-the verdict bands were fixed in ``docs/02-caracteristicas.md`` before the first run.
+grouped by registered domain and only its out-of-fold predictions are scored. The design is
+described in ``docs/02-caracteristicas.md``.
+
+The run is a diagnostic: every out-of-fold ROC AUC is reported as measured (0.5 = chance,
+1.0 = perfect identification) and each control is summarized by the minimum, median and
+maximum over its evaluated targets. No threshold is applied and no outcome is assigned;
+interpretation is left to the phase document.
 
 Only the training matrix is read; the test matrix is never opened. The probe is a diagnostic,
 not a model of the thesis.
@@ -42,12 +47,16 @@ from sereno_model.features.extract import FEATURE_NAMES, WWW_PREFIX
 REPORT_NAME = "source_bias_report.json"
 MODULE_COMMAND = "python -m sereno_model.features.source_bias"
 RUN_TYPE = (
-    "exploration/leakage control on the training split with cross-validation; "
+    "exploration/leakage diagnostic on the training split with cross-validation; "
     "not a model result"
 )
+AUC_READING = (
+    "out-of-fold ROC AUC reported as measured (0.5 = chance, 1.0 = perfect identification); "
+    "no threshold is applied and interpretation is left to the phase document"
+)
 HYPOTHESIS = (
-    "inside one class and one shape, the feature vector cannot recover the scheme, the www. "
-    "flag or the source of a URL (out-of-fold ROC AUC below the pass band)"
+    "diagnostic question: inside one class and one shape, how well does the feature vector "
+    f"recover the scheme, the www. flag or the source of a URL? {AUC_READING}"
 )
 
 DEFAULT_SEED = 20261111
@@ -55,11 +64,7 @@ N_ESTIMATORS = 200
 MIN_SAMPLES_LEAF = 5
 N_SPLITS = 5
 
-# Verdict bands, fixed before any run. Do not tune them to a result.
-PASS_BELOW = 0.65
-FAIL_ABOVE = 0.80
-PASS, REVIEW, FAIL, NOT_EVALUABLE = "pass", "review", "fail", "not_evaluable"
-SEVERITY = {PASS: 0, REVIEW: 1, FAIL: 2}
+EVALUATED, NOT_EVALUABLE = "evaluated", "not_evaluable"
 
 MIN_MINORITY_ROWS = 100
 MIN_GROUPS_PER_SIDE = 5
@@ -68,15 +73,6 @@ SHAPES = {True: "path", False: "bare"}
 CONTROLS = {"A": "scheme", "B": "www", "C": "source"}
 SOURCE_PREFIX = "source:"
 SECURE_SCHEME = "https"
-
-
-def verdict_for(auc: float | None) -> str:
-    """Band of an out-of-fold AUC; ``None`` means the target could not be evaluated."""
-    if auc is None:
-        return NOT_EVALUABLE
-    if auc < PASS_BELOW:
-        return PASS
-    return FAIL if auc > FAIL_ABOVE else REVIEW
 
 
 def latest_features_run(data_dir: Path) -> str:
@@ -168,7 +164,7 @@ def probe_target(
     n_estimators: int,
     jobs: int = 1,
 ) -> dict:
-    """Probe one binary target: counts, out-of-fold AUC, per-fold AUCs, verdict and ranking.
+    """Probe one binary target: counts, out-of-fold AUC, per-fold AUCs and feature ranking.
 
     A target whose minority side is too small, or that has too few groups on either side, is
     returned as ``not_evaluable`` with the reason and the counts instead of being fitted.
@@ -180,7 +176,7 @@ def probe_target(
     positive_groups = len(set(groups[labels]))
     negative_groups = len(set(groups[~labels]))
     result = {
-        "status": "evaluated",
+        "status": EVALUATED,
         "reason": None,
         "rows": len(labels),
         "positives": positives,
@@ -189,7 +185,6 @@ def probe_target(
         "negative_groups": negative_groups,
         "oof_auc": None,
         "fold_aucs": None,
-        "verdict": NOT_EVALUABLE,
         "feature_separability": None,
     }
 
@@ -225,7 +220,6 @@ def probe_target(
 
     result["oof_auc"] = _auc(labels, out_of_fold)
     result["fold_aucs"] = fold_aucs
-    result["verdict"] = verdict_for(result["oof_auc"])
     result["feature_separability"] = feature_separability(features, labels, feature_names)
     return result
 
@@ -274,8 +268,14 @@ def probe_strata(frame: pd.DataFrame, seed: int, n_estimators: int, jobs: int) -
     return strata
 
 
-def control_verdicts(strata: list[dict]) -> dict:
-    """Overall verdict of each control: the worst of its targets, ignoring not_evaluable."""
+def control_summaries(strata: list[dict]) -> dict:
+    """Neutral summary of each control over its evaluated targets; no outcome is assigned.
+
+    Per control: how many targets were evaluated and how many were not, the minimum, median
+    and maximum out-of-fold AUC of the evaluated ones, and the stratum and target holding the
+    maximum (the first one in report order on a tie). Without an evaluated target both the
+    AUC summary and the location are ``None``.
+    """
     controls = {}
     for control, name in CONTROLS.items():
         targets = [
@@ -284,16 +284,22 @@ def control_verdicts(strata: list[dict]) -> dict:
             for target in stratum["targets"]
             if target["control"] == control
         ]
-        evaluated = [target for target in targets if target["status"] == "evaluated"]
-        worst = max(evaluated, key=lambda target: target["oof_auc"], default=None)
-        verdicts = [target["verdict"] for target in evaluated]
+        evaluated = [target for target in targets if target["status"] == EVALUATED]
+        aucs = [target["oof_auc"] for target in evaluated]
+        highest = max(evaluated, key=lambda target: target["oof_auc"], default=None)
         controls[control] = {
             "name": name,
-            "verdict": max(verdicts, key=SEVERITY.get, default=NOT_EVALUABLE),
             "evaluated_targets": len(evaluated),
             "not_evaluable_targets": len(targets) - len(evaluated),
-            "highest_oof_auc": worst
-            and {key: worst[key] for key in ("stratum", "target", "oof_auc", "verdict")},
+            "oof_auc": {
+                "min": min(aucs),
+                "median": round(float(np.median(aucs)), 6),
+                "max": max(aucs),
+            }
+            if aucs
+            else None,
+            "max_oof_auc_at": highest
+            and {"stratum": highest["stratum"], "target": highest["target"]},
         }
     return controls
 
@@ -362,14 +368,10 @@ def run_control(
                 "min_minority_rows": MIN_MINORITY_ROWS,
                 "min_groups_per_side": MIN_GROUPS_PER_SIDE,
             },
-            "verdict_bands": {
-                "pass": f"oof_auc < {PASS_BELOW:.2f}",
-                "review": f"{PASS_BELOW:.2f} <= oof_auc <= {FAIL_ABOVE:.2f}",
-                "fail": f"oof_auc > {FAIL_ABOVE:.2f}",
-                "pass_below": PASS_BELOW,
-                "fail_above": FAIL_ABOVE,
-                "control_verdict": "the worst verdict of its targets, ignoring not_evaluable",
-            },
+            "auc_reading": AUC_READING,
+            "control_summary": "per control, the number of targets evaluated and not "
+            "evaluable, the minimum, median and maximum oof_auc over its evaluated targets, "
+            "and the stratum and target holding the maximum",
         },
         "features_run": {
             "dir": f"processed/{run}",
@@ -382,7 +384,7 @@ def run_control(
             "test_matrix": "never opened",
         },
         "feature_names": list(FEATURE_NAMES),
-        "controls": control_verdicts(strata),
+        "controls": control_summaries(strata),
         "strata": strata,
         "machine": {
             "platform": platform.platform(),
@@ -415,13 +417,14 @@ def _print_report(report: dict, data_dir: Path) -> None:
         f"{parameters['probe']['n_estimators']} trees, {parameters['probe']['n_splits']} "
         "folds grouped by registered domain"
     )
+    print(f"diagnostic run: {parameters['auc_reading']}")
     print(
         f"{'stratum':<16} {'target':<26} {'rows':>7} {'positives':>9} {'auc':>6} "
-        f"{'verdict':<13} top features"
+        f"{'status':<13} top features"
     )
     for stratum in report["strata"]:
         for target in stratum["targets"]:
-            evaluated = target["status"] == "evaluated"
+            evaluated = target["status"] == EVALUATED
             auc = f"{target['oof_auc']:.3f}" if evaluated else "-"
             top = ", ".join(
                 f"{entry['feature']} {entry['separability']:.3f}"
@@ -429,14 +432,20 @@ def _print_report(report: dict, data_dir: Path) -> None:
             )
             print(
                 f"{stratum['stratum']:<16} {target['target']:<26} {target['rows']:>7} "
-                f"{target['positives']:>9} {auc:>6} {target['verdict']:<13} "
+                f"{target['positives']:>9} {auc:>6} {target['status']:<13} "
                 f"{top or target['reason']}"
             )
     for letter, control in report["controls"].items():
+        aucs, place = control["oof_auc"], control["max_oof_auc_at"]
+        measured = (
+            f"oof auc min {aucs['min']:.3f}, median {aucs['median']:.3f}, "
+            f"max {aucs['max']:.3f} ({place['stratum']} {place['target']})"
+            if aucs
+            else "no oof auc"
+        )
         print(
-            f"control {letter} {control['name']}: {control['verdict']} "
-            f"({control['evaluated_targets']} targets evaluated, "
-            f"{control['not_evaluable_targets']} not evaluable)"
+            f"control {letter} {control['name']}: {control['evaluated_targets']} targets "
+            f"evaluated, {control['not_evaluable_targets']} not evaluable; {measured}"
         )
     print(f"duration {report['duration_seconds']:.1f} s")
     git = report["git"]

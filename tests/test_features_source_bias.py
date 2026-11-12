@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,11 +17,11 @@ from sereno_model.features.source_bias import (
     DEFAULT_SEED,
     N_ESTIMATORS,
     REPORT_NAME,
+    control_summaries,
     grouped_folds,
     main,
     probe_target,
     run_control,
-    verdict_for,
 )
 
 FEATURES_NOW = datetime(2026, 11, 14, 9, 0, 0, tzinfo=UTC)
@@ -33,6 +34,9 @@ PHISHING, LEGITIMATE = 1, 0
 # Few trees keep the tests fast; the command line keeps the documented 200.
 TREES = 15
 SEED = 11
+
+JUDGEMENT_WORDS = ("verdict", "pass", "fail", "review")
+JUDGEMENT_PATTERN = re.compile(r"(?<![a-z])(verdict|pass|fail|review)", re.IGNORECASE)
 
 
 def fixture_rows() -> list[dict]:
@@ -92,6 +96,35 @@ def target(report: dict, stratum_name: str, target_name: str) -> dict:
     return next(entry for entry in targets if entry["target"] == target_name)
 
 
+def evaluated_aucs(report: dict, control: str) -> list[tuple[float, str, str]]:
+    """Out-of-fold AUC, stratum and target of every evaluated target of one control."""
+    return [
+        (entry["oof_auc"], part["stratum"], entry["target"])
+        for part in report["strata"]
+        for entry in part["targets"]
+        if entry["control"] == control and entry["status"] == "evaluated"
+    ]
+
+
+def keys_and_strings(node) -> list[str]:
+    """Every key and every string value of a nested report, in lower case."""
+    if isinstance(node, dict):
+        found = [str(key).lower() for key in node]
+        return found + [text for value in node.values() for text in keys_and_strings(value)]
+    if isinstance(node, list):
+        return [text for value in node for text in keys_and_strings(value)]
+    return [node.lower()] if isinstance(node, str) else []
+
+
+def synthetic_target(control: str, name: str, auc: float | None) -> dict:
+    return {
+        "control": control,
+        "target": name,
+        "status": "not_evaluable" if auc is None else "evaluated",
+        "oof_auc": auc,
+    }
+
+
 def train_path(data_dir: Path) -> Path:
     return data_dir / "processed" / FEATURES_STAMP / "features_train.parquet"
 
@@ -100,13 +133,12 @@ def held_out_matrix_path(data_dir: Path) -> Path:
     return data_dir / "processed" / FEATURES_STAMP / "features_test.parquet"
 
 
-def test_a_feature_that_leaks_the_scheme_fails_and_is_named_first(report):
+def test_a_feature_that_leaks_the_scheme_is_measured_and_named_first(report):
     found = target(report, "phishing/path", "scheme")
 
     assert found["control"] == "A"
     assert found["status"] == "evaluated"
     assert found["oof_auc"] > 0.95
-    assert found["verdict"] == "fail"
     assert len(found["fold_aucs"]) == 5
     ranking = found["feature_separability"]
     assert ranking[0] == {"feature": "tilde_count", "separability": 1.0}
@@ -114,31 +146,33 @@ def test_a_feature_that_leaks_the_scheme_fails_and_is_named_first(report):
     values = [entry["separability"] for entry in ranking]
     assert values == sorted(values, reverse=True)
     assert all(0.5 <= value <= 1.0 for value in values)
-    assert report["controls"]["A"]["verdict"] == "fail"
+    summary = report["controls"]["A"]
+    assert summary["oof_auc"]["max"] == found["oof_auc"]
+    assert summary["max_oof_auc_at"] == {"stratum": "phishing/path", "target": "scheme"}
 
 
-def test_a_feature_that_leaks_the_source_fails_the_source_control(report):
+def test_a_feature_that_leaks_the_source_is_measured_by_the_source_control(report):
     names = [entry["target"] for entry in stratum(report, "phishing/path")["targets"]]
     assert names == ["scheme", "www", "source:hannousse_2021", "source:phishtank"]
 
     found = target(report, "phishing/path", "source:phishtank")
     assert found["control"] == "C"
-    assert found["verdict"] == "fail"
+    assert found["oof_auc"] > 0.95
     assert found["feature_separability"][0]["feature"] == "tilde_count"
-    assert report["controls"]["C"]["verdict"] == "fail"
+    assert report["controls"]["C"]["oof_auc"]["max"] > 0.95
+    assert report["controls"]["C"]["max_oof_auc_at"]["stratum"] == "phishing/path"
 
 
-def test_no_relation_between_the_vector_and_the_target_passes(report):
+def test_no_relation_between_the_vector_and_the_target_measures_near_chance(report):
     scheme = target(report, "legitimate/path", "scheme")
     www = target(report, "legitimate/path", "www")
 
     for found in (scheme, www, target(report, "phishing/path", "www")):
         assert found["status"] == "evaluated"
         assert found["oof_auc"] < 0.65
-        assert found["verdict"] == "pass"
-    # B has no failing target in any stratum, so its overall verdict is the worst: pass.
-    assert report["controls"]["B"]["verdict"] == "pass"
+    # B has no target the vector can recover, so even its maximum stays near chance.
     assert report["controls"]["B"]["evaluated_targets"] == 2
+    assert report["controls"]["B"]["oof_auc"]["max"] < 0.65
 
 
 def test_counts_rows_positives_and_groups_per_stratum_and_target(report, template):
@@ -170,7 +204,7 @@ def test_small_or_one_sided_targets_are_declared_not_evaluable(report):
 
     for found in (few_rows, one_sided):
         assert found["status"] == "not_evaluable"
-        assert found["verdict"] == "not_evaluable"
+        assert "verdict" not in found
         assert "fewer than 100 rows" in found["reason"]
         assert found["oof_auc"] is None
         assert found["fold_aucs"] is None
@@ -194,36 +228,133 @@ def test_a_target_held_by_too_few_groups_is_not_evaluable():
     assert found["oof_auc"] is None
 
 
-def test_a_control_without_evaluable_targets_is_not_evaluable(report):
-    # Every source target of the fixture that can be evaluated lies in one stratum; B and C
-    # ignore the targets that cannot when taking the worst verdict.
-    control = report["controls"]["C"]
-    assert control["evaluated_targets"] == 2
-    assert control["not_evaluable_targets"] >= 1
-    assert verdict_for(None) == "not_evaluable"
+def test_each_control_is_summarized_over_its_evaluated_targets(report):
+    assert list(report["controls"]) == ["A", "B", "C"]
+    assert [report["controls"][letter]["name"] for letter in "ABC"] == ["scheme", "www", "source"]
+    for letter, summary in report["controls"].items():
+        assert set(summary) == {
+            "name",
+            "evaluated_targets",
+            "not_evaluable_targets",
+            "oof_auc",
+            "max_oof_auc_at",
+        }
+        measured = evaluated_aucs(report, letter)
+        aucs = [auc for auc, _, _ in measured]
+        total = sum(
+            entry["control"] == letter for part in report["strata"] for entry in part["targets"]
+        )
+        assert summary["evaluated_targets"] == len(measured)
+        assert summary["not_evaluable_targets"] == total - len(measured)
+        assert summary["oof_auc"] == {
+            "min": min(aucs),
+            "median": round(float(np.median(aucs)), 6),
+            "max": max(aucs),
+        }
+        highest = max(measured, key=lambda entry: entry[0])
+        assert summary["max_oof_auc_at"] == {"stratum": highest[1], "target": highest[2]}
+    # The fixture has two scheme targets large enough to probe and two that are not.
+    assert report["controls"]["A"]["evaluated_targets"] == 2
+    assert report["controls"]["A"]["not_evaluable_targets"] == 2
+    assert report["controls"]["C"]["evaluated_targets"] == 2
+    assert report["controls"]["C"]["not_evaluable_targets"] >= 1
 
 
-@pytest.mark.parametrize(
-    ("auc", "expected"),
-    [
-        (0.5, "pass"),
-        (0.6499, "pass"),
-        (0.65, "review"),
-        (0.80, "review"),
-        (0.8001, "fail"),
-        (1.0, "fail"),
-    ],
-)
-def test_verdict_bands_are_fixed(auc, expected, report):
-    assert verdict_for(auc) == expected
-    assert report["parameters"]["verdict_bands"] == {
-        "pass": "oof_auc < 0.65",
-        "review": "0.65 <= oof_auc <= 0.80",
-        "fail": "oof_auc > 0.80",
-        "pass_below": 0.65,
-        "fail_above": 0.80,
-        "control_verdict": "the worst verdict of its targets, ignoring not_evaluable",
+def test_control_summary_takes_min_median_max_and_the_place_of_the_max():
+    strata = [
+        {
+            "stratum": "phishing/path",
+            "targets": [
+                synthetic_target("A", "scheme", 0.9),
+                synthetic_target("B", "www", 0.51),
+                synthetic_target("C", "source:x", 0.7),
+                synthetic_target("C", "source:y", None),
+            ],
+        },
+        {
+            "stratum": "legitimate/path",
+            "targets": [
+                synthetic_target("A", "scheme", 0.6),
+                synthetic_target("B", "www", None),
+                synthetic_target("C", "source:z", 0.55),
+            ],
+        },
+        {
+            "stratum": "legitimate/bare",
+            "targets": [
+                synthetic_target("A", "scheme", 0.75),
+                synthetic_target("C", "source:z", 0.59),
+                synthetic_target("C", "source:w", 0.61),
+            ],
+        },
+    ]
+
+    found = control_summaries(strata)
+
+    assert found["A"] == {
+        "name": "scheme",
+        "evaluated_targets": 3,
+        "not_evaluable_targets": 0,
+        "oof_auc": {"min": 0.6, "median": 0.75, "max": 0.9},
+        "max_oof_auc_at": {"stratum": "phishing/path", "target": "scheme"},
     }
+    assert found["B"] == {
+        "name": "www",
+        "evaluated_targets": 1,
+        "not_evaluable_targets": 1,
+        "oof_auc": {"min": 0.51, "median": 0.51, "max": 0.51},
+        "max_oof_auc_at": {"stratum": "phishing/path", "target": "www"},
+    }
+    # An even number of evaluated targets: the median is the mean of the two central values.
+    assert found["C"] == {
+        "name": "source",
+        "evaluated_targets": 4,
+        "not_evaluable_targets": 1,
+        "oof_auc": {"min": 0.55, "median": 0.6, "max": 0.7},
+        "max_oof_auc_at": {"stratum": "phishing/path", "target": "source:x"},
+    }
+
+
+def test_a_control_without_evaluable_targets_reports_counts_and_no_auc():
+    strata = [
+        {
+            "stratum": "phishing/bare",
+            "targets": [synthetic_target("A", "scheme", None), synthetic_target("B", "www", None)],
+        }
+    ]
+
+    found = control_summaries(strata)
+
+    assert found["A"] == {
+        "name": "scheme",
+        "evaluated_targets": 0,
+        "not_evaluable_targets": 1,
+        "oof_auc": None,
+        "max_oof_auc_at": None,
+    }
+    # A control with no target at all in the strata is still listed, with zero counts.
+    assert found["C"] == {
+        "name": "source",
+        "evaluated_targets": 0,
+        "not_evaluable_targets": 0,
+        "oof_auc": None,
+        "max_oof_auc_at": None,
+    }
+
+
+def test_report_carries_no_verdict_and_no_judgement_label(report):
+    texts = keys_and_strings(report)
+
+    assert not [text for text in texts if text in JUDGEMENT_WORDS]
+    assert not [text for text in texts if JUDGEMENT_PATTERN.search(text)]
+    assert "verdict_bands" not in report["parameters"]
+    for part in report["strata"]:
+        for entry in part["targets"]:
+            assert entry["status"] in ("evaluated", "not_evaluable")
+    assert "diagnostic" in report["run_type"]
+    assert "0.5 = chance" in report["hypothesis"]
+    assert "1.0 = perfect identification" in report["hypothesis"]
+    assert "phase document" in report["hypothesis"]
 
 
 def test_folds_never_put_a_group_on_both_sides():
@@ -420,8 +551,18 @@ def test_cli_dry_run_prints_a_table_and_writes_nothing(data_dir, capsys, monkeyp
     output = capsys.readouterr().out
     assert "phishing/path" in output and "scheme" in output and "source:phishtank" in output
     assert "tilde_count" in output
-    assert "fail" in output and "pass" in output and "not_evaluable" in output
-    assert "A scheme: fail" in output
+    assert not JUDGEMENT_PATTERN.search(output)
+    assert "diagnostic" in output
+    assert "0.5 = chance" in output and "1.0 = perfect identification" in output
+    assert "phase document" in output
+    assert "fewer than 100 rows" in output
+    assert "control A scheme: 2 targets evaluated, 2 not evaluable" in output
+    assert re.search(
+        r"control A scheme: .* min \d\.\d{3}, median \d\.\d{3}, max \d\.\d{3} "
+        r"\(phishing/path scheme\)",
+        output,
+    )
+    assert "control B www: 2 targets evaluated" in output
     assert "dry run" in output
     assert "http://" not in output and "https://" not in output
 
