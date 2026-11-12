@@ -34,12 +34,11 @@ import pyarrow as pa
 import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedGroupKFold
 
 from sereno_model.data.acquire import ChecksumMismatchError
 from sereno_model.data.clean import CLASS_NAMES
 from sereno_model.data.normalize import parse_url
-from sereno_model.data.split import TRAIN, group_keys
+from sereno_model.data.split import TRAIN, group_keys, grouped_folds
 from sereno_model.features.build import REPORT_NAME as FEATURES_REPORT_NAME
 from sereno_model.features.build import REPOSITORY_DIR, git_state, matrix_file, matrix_hash
 from sereno_model.features.extract import FEATURE_NAMES, WWW_PREFIX
@@ -125,14 +124,6 @@ def load_train_matrix(data_dir: Path, run: str) -> tuple[pd.DataFrame, dict]:
     return frame, recorded
 
 
-def grouped_folds(
-    labels: np.ndarray, groups: np.ndarray, seed: int
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Train and held-out row positions of each fold; a group never sits on both sides."""
-    splitter = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
-    return list(splitter.split(np.zeros(len(labels)), labels, groups))
-
-
 def _auc(labels: np.ndarray, scores: np.ndarray) -> float | None:
     """ROC AUC rounded for the report; ``None`` when only one side is present."""
     if len(np.unique(labels)) < 2:
@@ -204,7 +195,7 @@ def probe_target(
 
     out_of_fold = np.zeros(len(labels))
     fold_aucs = []
-    for train, held_out in grouped_folds(labels, groups, seed):
+    for train, held_out in grouped_folds(labels, groups, n_splits=N_SPLITS, seed=seed):
         probe = RandomForestClassifier(
             n_estimators=n_estimators,
             min_samples_leaf=MIN_SAMPLES_LEAF,

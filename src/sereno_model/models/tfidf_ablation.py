@@ -50,7 +50,6 @@ from sereno_model.models.diagnose import (
     _official_reference,
     capped_domains,
     error_analysis,
-    make_folds,
 )
 from sereno_model.models.stacking import (  # noqa: F401 (re-exported building blocks)
     BASE_MODEL_NAMES,
@@ -60,6 +59,8 @@ from sereno_model.models.stacking import (  # noqa: F401 (re-exported building b
     DEFAULT_N_SPLITS,
     DEFAULT_SEED,
     DEFAULT_THRESHOLD_STEP,
+    FOLD_GROUPED,
+    FOLD_RANDOM,
     LATENCY_SEED_OFFSET,
     MAX_FEATURES,
     MODEL_STEP,
@@ -69,6 +70,7 @@ from sereno_model.models.stacking import (  # noqa: F401 (re-exported building b
     cross_validate,
     feature_columns,
     feature_union,
+    make_folds,
     make_threshold_grid,
     measure_latency,
     meta_estimator,
@@ -216,8 +218,8 @@ def tfidf_ablation(
     frame, recorded = load_training_matrix(data_dir, run)
     y = frame["label"].to_numpy().astype(int)
     groups = frame["group"].to_numpy()
-    plain = make_folds(y, groups, n_splits=n_splits, seed=seed, grouped=False)
-    grouped = make_folds(y, groups, n_splits=n_splits, seed=seed, grouped=True)
+    plain = make_folds(y, groups, n_splits=n_splits, seed=seed, strategy=FOLD_RANDOM)
+    grouped = make_folds(y, groups, n_splits=n_splits, seed=seed, strategy=FOLD_GROUPED)
     capped = capped_domains(data_dir, recorded)
     inputs = {flag: model_inputs(frame, flag) for flag in (True, False)}
 

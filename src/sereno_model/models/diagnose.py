@@ -30,7 +30,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
 
 from sereno_model.data.split import TRAIN
 from sereno_model.features.build import git_state, matrix_file
@@ -44,7 +43,9 @@ from sereno_model.models.stacking import (
     SEARCH_SPACES,
     cross_validate,
     feature_columns,
-    grouped_folds,
+    FOLD_GROUPED,
+    FOLD_RANDOM,
+    make_folds,
     make_threshold_grid,
 )
 from sereno_model.models.train import (
@@ -86,15 +87,6 @@ WIDE_SEARCH_SPACES = {
         "learning_rate": _WIDE_LEARNING_RATES,
     },
 }
-
-
-def make_folds(labels, groups, n_splits: int, seed: int, grouped: bool) -> list:
-    """Grouped folds as in the official run, or plain stratified folds that ignore groups."""
-    labels = np.asarray(labels)
-    if grouped:
-        return grouped_folds(labels, groups, n_splits=n_splits, seed=seed)
-    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    return [(train, val) for train, val in splitter.split(np.zeros(len(labels)), labels)]
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -314,7 +306,8 @@ def diagnose(
     groups = frame["group"].to_numpy()
 
     def measure(grouped: bool, spaces: dict, iterations: int):
-        folds = make_folds(y, groups, n_splits=n_splits, seed=seed, grouped=grouped)
+        strategy = FOLD_GROUPED if grouped else FOLD_RANDOM
+        folds = make_folds(y, groups, n_splits=n_splits, seed=seed, strategy=strategy)
         clock = time.perf_counter()
         cv = cross_validate(
             X, y, folds, search_spaces=spaces, n_iter=iterations, seed=seed, n_jobs=n_jobs,

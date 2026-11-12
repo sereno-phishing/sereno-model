@@ -41,12 +41,13 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.model_selection import RandomizedSearchCV, StratifiedGroupKFold, StratifiedKFold
+from sklearn.model_selection import RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from threadpoolctl import threadpool_limits
 from xgboost import XGBClassifier
 
 from sereno_model.data.normalize import parse_url
+from sereno_model.data.split import grouped_folds, make_folds  # noqa: F401 (re-exported)
 from sereno_model.features.build import AUDIT_COLUMNS, METADATA_COLUMNS
 from sereno_model.features.extract import (
     FEATURE_NAMES,
@@ -156,27 +157,6 @@ def base_estimator(name: str, seed: int):
 
 def meta_estimator(seed: int) -> LogisticRegression:
     return LogisticRegression(random_state=seed)
-
-
-def grouped_folds(labels, groups, n_splits: int, seed: int) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Stratified folds where every row of a group lands in the same validation fold."""
-    labels = np.asarray(labels)
-    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    return [
-        (train, val)
-        for train, val in splitter.split(np.zeros(len(labels)), labels, np.asarray(groups))
-    ]
-
-
-def make_folds(labels, groups, n_splits: int, seed: int, strategy: str) -> list:
-    """Plain shuffled stratified folds (``random``) or folds grouped by domain (``grouped``)."""
-    if strategy not in FOLD_STRATEGIES:
-        raise ValueError(f"unknown fold strategy {strategy!r}; expected one of {FOLD_STRATEGIES}")
-    labels = np.asarray(labels)
-    if strategy == FOLD_GROUPED:
-        return grouped_folds(labels, groups, n_splits=n_splits, seed=seed)
-    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    return [(train, val) for train, val in splitter.split(np.zeros(len(labels)), labels)]
 
 
 def url_text(urls) -> list[str]:

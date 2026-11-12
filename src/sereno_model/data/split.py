@@ -144,6 +144,31 @@ def held_out_mask(
     return mask.tolist()
 
 
+def grouped_folds(labels, groups, n_splits: int, seed: int) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Cross-validation folds where every row of a group lands in the same validation fold.
+
+    The single fold builder of the package: model training, diagnostics, ablations and the
+    source-bias probe all call it (or ``make_folds``) so their folds cannot drift apart.
+    """
+    labels = np.asarray(labels)
+    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    return [
+        (train, val)
+        for train, val in splitter.split(np.zeros(len(labels)), labels, np.asarray(groups))
+    ]
+
+
+def make_folds(labels, groups, n_splits: int, seed: int, strategy: str) -> list:
+    """Plain shuffled stratified folds (``random``) or folds grouped by domain (``grouped``)."""
+    if strategy not in STRATEGIES:
+        raise ValueError(f"unknown fold strategy {strategy!r}; expected one of {STRATEGIES}")
+    labels = np.asarray(labels)
+    if strategy == GROUPED:
+        return grouped_folds(labels, groups, n_splits=n_splits, seed=seed)
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    return [(train, val) for train, val in splitter.split(np.zeros(len(labels)), labels)]
+
+
 def partition_hash(urls: list[str], splits: list[str]) -> str:
     """SHA-256 over the sorted ``url<TAB>split`` lines, whatever the storage."""
     digest = hashlib.sha256()

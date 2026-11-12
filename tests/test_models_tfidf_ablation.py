@@ -13,7 +13,7 @@ from test_models_train import make_features_run
 from sereno_model.data.normalize import parse_url
 from sereno_model.features.extract import FEATURE_NAMES, measured_text
 from sereno_model.models import tfidf_ablation as module
-from sereno_model.models.diagnose import make_folds
+from sereno_model.data.split import make_folds
 from sereno_model.models.stacking import BASE_MODEL_NAMES, cross_validate
 from sereno_model.models.tfidf_ablation import (
     TEXT_COLUMN,
@@ -106,7 +106,7 @@ def test_cross_validation_refits_the_vectorizer_inside_each_training_fold(monkey
     frame = _text_frame()
     X = model_inputs(frame, with_vector=True)
     y = frame["label"].to_numpy().astype(int)
-    folds = make_folds(y, frame["group"], n_splits=3, seed=0, grouped=False)
+    folds = make_folds(y, frame["group"], n_splits=3, seed=0, strategy="random")
     seen = []
     original = TfidfVectorizer.fit_transform
 

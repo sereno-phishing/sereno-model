@@ -7,11 +7,11 @@ import pytest
 from test_models_stacking import synthetic_matrix
 from test_models_train import make_features_run
 
+from sereno_model.data.split import make_folds
 from sereno_model.models import diagnose as diagnose_module
 from sereno_model.models.diagnose import (
     base_model_correlation,
     diagnose,
-    make_folds,
     subgroup_breakdown,
     top_domains,
 )
@@ -55,7 +55,7 @@ def test_ungrouped_folds_ignore_the_groups_and_grouped_folds_keep_them_whole():
     frame = synthetic_matrix(rows=300, groups=30)
     labels, groups = frame["label"].to_numpy(), frame["group"].to_numpy()
     for grouped in (True, False):
-        folds = make_folds(labels, groups, n_splits=5, seed=7, grouped=grouped)
+        folds = make_folds(labels, groups, n_splits=5, seed=7, strategy="grouped" if grouped else "random")
         assert len(folds) == 5
         covered = np.concatenate([val for _, val in folds])
         assert sorted(covered) == list(range(300))
@@ -71,8 +71,8 @@ def test_ungrouped_folds_ignore_the_groups_and_grouped_folds_keep_them_whole():
 def test_ungrouped_folds_are_reproducible_with_the_seed():
     labels = np.array([0, 1] * 50)
     groups = np.arange(100)
-    first = make_folds(labels, groups, n_splits=5, seed=3, grouped=False)
-    second = make_folds(labels, groups, n_splits=5, seed=3, grouped=False)
+    first = make_folds(labels, groups, n_splits=5, seed=3, strategy="random")
+    second = make_folds(labels, groups, n_splits=5, seed=3, strategy="random")
     for (_, a), (_, b) in zip(first, second, strict=True):
         assert list(a) == list(b)
 

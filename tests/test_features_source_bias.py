@@ -11,14 +11,15 @@ from test_features_build import make_split_run, row
 
 from sereno_model.data.acquire import ChecksumMismatchError
 from sereno_model.data.clean import write_parquet
+from sereno_model.data.split import grouped_folds
 from sereno_model.features.build import MATRIX_SCHEMA, build, matrix_hash
 from sereno_model.features.extract import FEATURE_NAMES
 from sereno_model.features.source_bias import (
     DEFAULT_SEED,
     N_ESTIMATORS,
     REPORT_NAME,
+    N_SPLITS,
     control_summaries,
-    grouped_folds,
     main,
     probe_target,
     run_control,
@@ -362,7 +363,7 @@ def test_folds_never_put_a_group_on_both_sides():
     groups = np.array([f"g{index // 4}" for index in range(400)])
     labels = rng.random(400) < 0.4
 
-    folds = grouped_folds(labels, groups, seed=SEED)
+    folds = grouped_folds(labels, groups, n_splits=N_SPLITS, seed=SEED)
 
     assert len(folds) == 5
     held_out = np.concatenate([test for _, test in folds])
