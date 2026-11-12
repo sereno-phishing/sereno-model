@@ -84,3 +84,21 @@ Las características que dependen de una lista (palabras sospechosas, servicio a
 Se descartaron las representaciones aprendidas del texto (embeddings, TF-IDF, BERT) porque el ADD pide un vector definido de características léxicas y de host.
 
 Riesgo aceptado: si las listas aportan mucho, el primer F1 saldrá más bajo.
+
+## 2026-11-11: decisiones técnicas sustentadas en el corpus
+
+Indicación de Andrés. Las decisiones técnicas del modelo se toman primero de lo que hacen los 40 papers del corpus del TDP; si el corpus no alcanza, de fuentes indexadas con PDF público. Lo que no tenga ese sustento se declara como decisión propia.
+
+## 2026-11-11: sin la barra final
+
+Decisión de Andrés, tras el control de sesgo de fuente de la corrida `20261112T024408Z`.
+
+Las barras con que termina la URL no se miden en el vector, que pasa a la versión 2. Lo hacen Ghalechyan et al. (2024) y P30 antes de extraer características. En las URL sin ruta, esa barra era lo que más delataba el esquema, y depende de cómo escribe cada fuente sus URL.
+
+Los umbrales de 0.65 y 0.80 de ese control eran un diseño propio sin sustento en el corpus, donde ningún paper mide si la fuente se puede identificar.
+
+Queda propuesto y sin confirmar por Andrés:
+
+- Reportar el control como diagnóstico y como limitación declarada, sin puerta de pasa o falla.
+- Medir el efecto de la fuente en la Fase 3 entrenando con una fuente y probando con otra, como P20, que reporta una caída de 94.46 % a 80 % de exactitud.
+- No agregar Common Crawl por ahora: cambia el Charter y el ADD, y ningún paper del corpus lo usa para corregir la forma de las URL.

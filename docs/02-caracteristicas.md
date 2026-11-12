@@ -37,14 +37,14 @@ Definir el vector de características de una URL e implementar su extracción en
 | Lista de características del vector, con nombre y definición | Aprobada por Andrés el 2026-11-11; ver «Vector base» |
 | Características que dependen de una lista (palabras sospechosas, acortadores, marcas, TLD sospechoso) | Fuera del vector base; se agregan después como un paso medido aparte |
 | Extracción en un paquete único, con pruebas | Hecho el 2026-11-11; ver el registro |
-| Control de sesgo de fuente sobre el vector | Pendiente |
+| Control de sesgo de fuente sobre el vector | Ejecutado el 2026-11-11, corrida `20261112T024408Z`: falla con umbrales propios; falta sustento del corpus y la decisión de Andrés |
 | Matrices de entrenamiento y de prueba con hash y reporte | Hecho el 2026-11-11; corrida `20261112T023011Z` |
 
 ## Vector base
 
-Versión 1 del vector, aprobada por Andrés el 2026-11-11. Todas las características se calculan desde el texto de la URL ya normalizada con el criterio de «URL equivalente» del ADD.
+Versión 2 del vector. Andrés aprobó la versión 1 el 2026-11-11 y, el mismo día, el cambio que da la versión 2: las barras con que termina la URL no se miden. Todas las características se calculan desde el texto de la URL ya normalizada con el criterio de «URL equivalente» del ADD.
 
-El «texto medido» es la URL normalizada sin el esquema ni «://» y sin el prefijo «www.» del host. Así, `http://www.ejemplo.com/a` y `https://ejemplo.com/a` dan el mismo vector. El «host» es el host sin el prefijo «www.».
+El «texto medido» es la URL normalizada sin el esquema ni «://», sin el prefijo «www.» del host y sin las barras con que termina la URL. Así, `http://www.ejemplo.com/a` y `https://ejemplo.com/a` dan el mismo vector. El «host» es el host sin el prefijo «www.».
 
 | N.º | Nombre | Definición | Papers del corpus (aprox.) |
 |---|---|---|---|
@@ -87,7 +87,7 @@ Casos límite, decididos al implementar:
 | Host sin dominio registrado | IP, una sola etiqueta o sufijo desconocido: `subdomain_count` y `tld_length` valen 0. Si el host es un sufijo público, `tld_length` es su longitud |
 | Sufijos | Solo ICANN: `victim.pages.dev` tiene un subdominio y sufijo `dev`. Las etiquetas vacías no cuentan |
 | Usuario y contraseña | Quedan en el texto medido, así que cuentan para `has_at`, la longitud, los símbolos y la entropía; no forman parte del host |
-| Ruta | Vacía: longitud 0 y profundidad 0. `/`: longitud 1 y profundidad 0 |
+| Ruta | Las barras con que termina la URL no se miden: `/a/b/` cuenta como `/a/b` y una `/` sola como ruta vacía (Ghalechyan et al., 2024; P30). La barra que precede a una consulta se conserva. Ruta vacía: longitud 0 y profundidad 0 |
 | Consulta | Ausente o vacía («?» solo): longitud 0 y 0 parámetros. El «?» no cuenta en la longitud. Los parámetros son los tramos no vacíos entre «&» |
 | Dígitos | Solo ASCII, del 0 al 9 |
 | Entropía | Sobre los caracteres (puntos de código) del texto medido |
@@ -241,4 +241,72 @@ Un AUC de 0.5 equivale a adivinar al azar y uno de 1.0 a acertar siempre.
 
 Qué se hace con un fallo lo decide Andrés. La decisión de la Fase 1 prevé agregar Common Crawl como fuente de legítimas con ruta, lo que cambia el Charter y el ADD.
 
-Pendiente: correr el control sobre código con commit.
+### 2026-11-11: resultado del control de sesgo de fuente
+
+Corrida `20261112T024408Z` (hora UTC), sobre el commit `f8ca39f` y con el repositorio limpio, con semilla 20261111 y un hilo. Entrada: matriz de entrenamiento de la corrida `20261112T023011Z`, con su hash comprobado. Reporte en `data/processed/20261112T024408Z/source_bias_report.json`. Es una corrida de exploración con validación cruzada sobre entrenamiento: no es un resultado del modelo.
+
+| Estrato | Objetivo | URL | Positivas | AUC | Resultado | Característica que más separa |
+|---|---|---|---|---|---|---|
+| Legítimas sin ruta | Esquema | 10,970 | 8,292 | 0.656 | Se revisa | `path_length` 0.620 |
+| Legítimas sin ruta | «www.» | 10,970 | 361 | 0.616 | Pasa | `subdomain_count` 0.576 |
+| Legítimas sin ruta | Fuente: Hannousse | 10,970 | 247 | 0.781 | Se revisa | `url_entropy` 0.653 |
+| Legítimas sin ruta | Fuente: Majestic Million | 10,970 | 906 | 0.702 | Se revisa | `dot_count` 0.648 |
+| Legítimas sin ruta | Fuente: Dam Minh | 10,970 | 9,818 | 0.667 | Se revisa | `dot_count` 0.593 |
+| Legítimas con ruta | Esquema | 21,241 | 6,914 | 0.702 | Se revisa | `path_length` 0.600 |
+| Legítimas con ruta | «www.» | 21,241 | 16,956 | 0.780 | Se revisa | `subdomain_count` 0.715 |
+| Legítimas con ruta | Fuente: Hannousse | 21,241 | 2,784 | 0.912 | Falla | `url_length` 0.776 |
+| Legítimas con ruta | Fuente: Dam Minh | 21,241 | 18,458 | 0.913 | Falla | `url_length` 0.776 |
+| Phishing sin ruta | Esquema | 11,018 | 8,360 | 0.818 | Falla | `path_length` 0.759 |
+| Phishing sin ruta | «www.» | 11,018 | 360 | 0.816 | Falla | `subdomain_count` 0.741 |
+| Phishing sin ruta | Fuente: Hannousse | 11,018 | 675 | 0.709 | Se revisa | `dot_count` 0.592 |
+| Phishing sin ruta | Fuente: PhishTank | 11,018 | 7,541 | 0.644 | Pasa | `host_hyphen_count` 0.573 |
+| Phishing sin ruta | Fuente: Dam Minh | 11,018 | 3,233 | 0.658 | Se revisa | `host_hyphen_count` 0.583 |
+| Phishing con ruta | Esquema | 21,194 | 17,708 | 0.802 | Falla | `slash_count` 0.686 |
+| Phishing con ruta | «www.» | 21,194 | 1,815 | 0.869 | Falla | `subdomain_count` 0.697 |
+| Phishing con ruta | Fuente: Hannousse | 21,194 | 3,771 | 0.826 | Falla | `slash_count` 0.712 |
+| Phishing con ruta | Fuente: PhishTank | 21,194 | 13,781 | 0.769 | Se revisa | `slash_count` 0.631 |
+| Phishing con ruta | Fuente: Dam Minh | 21,194 | 5,554 | 0.619 | Pasa | `url_length` 0.564 |
+
+Con los umbrales fijados antes de la corrida, los tres controles fallan: de 19 mediciones, 3 pasan, 9 se revisan y 7 fallan. El vector guarda información sobre el esquema, el «www.» y la fuente, aunque ninguno de los tres sea una característica.
+
+Lo que se observa, sin interpretar más de lo medido:
+
+- En las URL sin ruta, lo que más delata el esquema es `path_length`. En ese estrato la ruta solo puede ser vacía o «/», así que la diferencia es si la URL termina en barra o no. Eso depende de cómo escribe cada fuente sus URL y no del phishing.
+- Las dos fuentes de legítimas con ruta se distinguen entre sí con un AUC de 0.91, sobre todo por la longitud de la URL y de la ruta. Son dos colecciones armadas con criterios distintos.
+- El «www.» se recupera por el número de subdominios y de puntos, aunque el prefijo se quita antes de contar.
+
+Límite de este control: la sonda y los umbrales de 0.65 y 0.80 son un diseño propio de este repositorio. No salen de los papers del corpus, así que el veredicto de «falla» no tiene todavía sustento en la literatura. El control mide que la fuente se puede identificar; no mide cuánto de la separación entre phishing y legítimas se debe a la fuente.
+
+### 2026-11-11: el sesgo entre fuentes en el corpus del TDP
+
+Indicación de Andrés: las decisiones técnicas se sustentan primero en los 40 papers del corpus y, si no alcanzan, en fuentes indexadas con PDF público.
+
+Búsqueda dirigida en el texto extraído de los 40 papers, con lectura de los pasajes y no de cada paper completo. Se comprobaron a mano las citas de P19, P20 y P30.
+
+| Tema | Qué hace el corpus | Papers |
+|---|---|---|
+| Forma de la URL antes de extraer | Quitan el «www.» y las barras finales; P02 quita además el esquema | P19 (Ghalechyan et al., 2024), P30, P02 |
+| Desbalance de forma entre clases | P19 exige que el conjunto no tenga desbalance de longitud ni de profundidad de URL entre clases y, si lo tiene, pide ponderar los ejemplos. No da procedimiento ni cifras | P19 |
+| Sesgo por mezclar fuentes | Solo P19 lo relaciona con la forma de la URL. P38 lo declara como limitación, en datasets de red | P19, P38 |
+| Validación con otro dataset | P20 entrena con un dataset y prueba con otro: pasa de 94.46 % a 80 % de exactitud. P29 prueba con un conjunto no visto que solo tiene phishing: 95.5 % | P20, P29 |
+| Validación con datos más nuevos | P19 prueba con phishing recogido después del entrenamiento | P19 |
+| Duplicados | Los quitan antes de partir | P02, P10, P14, P17, P26, P28, P32, P34 |
+
+No aparece en el corpus:
+
+- Una medición que prediga la fuente de una URL, como la sonda de este repositorio, ni umbrales para ella.
+- La partición agrupada por dominio. Es una decisión de la Fase 1 que va más allá de lo que hacen los papers.
+- Common Crawl elegido para corregir la forma de las URL. Cuatro papers lo usan como fuente de legítimas (P02, P04, P05, P29) sin dar ese motivo.
+- Quitar una característica por ser un artefacto de la fuente.
+
+Consecuencia: el veredicto de «falla» del control anterior se apoya en umbrales propios. Lo que el corpus sí respalda es quitar las barras finales antes de extraer (P19, P30), que atiende la señal de `path_length` en las URL sin ruta, y medir el efecto de la fuente probando con otro dataset (P20).
+
+### 2026-11-11: versión 2 del vector, sin la barra final
+
+Decisión de Andrés: las barras con que termina la URL no se miden, como hacen Ghalechyan et al. (2024) y P30, y se vuelven a correr las matrices y el control. Ver `decisiones.md`.
+
+Propuesto y sin confirmar por Andrés: reportar el control como diagnóstico y limitación declarada, sin umbrales de pasa o falla; medir el efecto de la fuente en la Fase 3 probando con otra fuente, como P20; y no agregar Common Crawl por ahora.
+
+El cambio afecta a `url_length`, `path_length`, `slash_count`, `has_double_slash` y `url_entropy`. El vector pasa a la versión 2 y las matrices de la versión 1 (corrida `20261112T023011Z`) quedan reemplazadas.
+
+Pendiente: matrices y control de la versión 2 sobre código con commit.
