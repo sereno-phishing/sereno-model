@@ -224,4 +224,21 @@ Estadísticas del reporte, calculadas solo con entrenamiento. La prueba no se re
 
 Estas diferencias todavía no se interpretan como señal de phishing: parte puede venir de la fuente de cada clase. Eso lo decide el control de sesgo de fuente.
 
-Pendiente: control de sesgo de fuente sobre estas matrices.
+### 2026-11-11: diseño del control de sesgo de fuente
+
+El diseño y sus umbrales se fijan aquí antes de correr el control, para no ajustarlos a la vista del resultado.
+
+Pregunta: con las 24 características y nada más, ¿se puede adivinar el esquema de la URL, si traía «www.» o de qué fuente vino? Si se puede, un modelo de clases podría estar aprendiendo la fuente en lugar del phishing.
+
+- Datos: solo la matriz de entrenamiento de la corrida `20261112T023011Z`. La de prueba no se abre.
+- Estratos: cada medición se hace dentro de una clase y de una forma (con ruta o sin ruta), para que ni la clase ni la ruta expliquen el resultado. Son cuatro estratos.
+- Objetivos por estrato: el esquema (https o http), el «www.» y cada fuente (si la URL figura en esa fuente).
+- Sonda: un Random Forest de 200 árboles con al menos 5 URL por hoja, igual para todos los objetivos, evaluado con validación cruzada de 5 partes agrupada por dominio registrado y semilla 20261111. Se reporta el AUC sobre las predicciones hechas fuera de cada parte. Es una sonda de diagnóstico, no un modelo de la tesis.
+- Por característica: la separación que logra cada una por sí sola frente a cada objetivo, para nombrar cuál delata la fuente.
+- Umbrales: AUC menor de 0.65, pasa; entre 0.65 y 0.80, se revisa; mayor de 0.80, falla. Un objetivo con menos de 100 URL en su lado menor, o con menos de 5 dominios en algún lado, no se evalúa y se declara.
+
+Un AUC de 0.5 equivale a adivinar al azar y uno de 1.0 a acertar siempre.
+
+Qué se hace con un fallo lo decide Andrés. La decisión de la Fase 1 prevé agregar Common Crawl como fuente de legítimas con ruta, lo que cambia el Charter y el ADD.
+
+Pendiente: correr el control sobre código con commit.
