@@ -102,3 +102,21 @@ Decisión de Andrés, confirmada el mismo día:
 - Reportar el control como diagnóstico y como limitación declarada, sin puerta de pasa o falla.
 - Medir el efecto de la fuente en la Fase 3 entrenando con una fuente y probando con otra, como P20, que reporta una caída de 94.46 % a 80 % de exactitud.
 - No agregar Common Crawl por ahora: cambia el Charter y el ADD, y ningún paper del corpus lo usa para corregir la forma de las URL.
+
+## 2026-11-12: método de entrenamiento del Stacking
+
+Decisión de Andrés sobre la propuesta de la Fase 3.
+
+| Decisión | Elección | Sustento |
+|---|---|---|
+| Entradas del meta-modelo | Probabilidades fuera de pliegue de cada modelo base sobre el entrenamiento, con los mismos pliegues | P15 |
+| Meta-modelo | Regresión logística | P27 |
+| Validación cruzada | 5 pliegues estratificados y agrupados por dominio registrado, semilla 20261111; los mismos pliegues para la búsqueda, las predicciones fuera de pliegue y el umbral | 5 pliegues: P09 y P07. Agrupación: decisión propia heredada de la Fase 1, el corpus no la trata |
+| Ajuste de hiperparámetros | Búsqueda aleatoria evaluada con F1. RF: 50 a 100 árboles, profundidad 1 a 10. XGBoost: 25 a 100 árboles, profundidad 6 a 10, tasa 0.05 a 0.2. LightGBM: 20 a 100 árboles, profundidad 6 a 10, tasa 0.05 a 0.2 | P09 |
+| Candidatos por búsqueda | 20 por modelo base | Decisión propia; el corpus no fija el presupuesto |
+| Umbral | El de mayor F1 promedio entre los pliegues, sobre una grilla de 0.01 a 0.99; nunca con la prueba | Regla: P17. Grilla: decisión propia |
+| Calibración | No se aplica | El corpus no la trata |
+| Formato del artefacto | `joblib`, un archivo por versión, con su `report.json` | Decisión menor de implementación |
+
+Se descartó entrenar el meta-modelo con predicciones sobre los mismos datos con que se ajustaron los modelos base, porque sobrevalora a los modelos que memorizan. P07, P17, P20 y P24 usan búsqueda en rejilla; se siguió a P09, que usa búsqueda aleatoria con rangos explícitos.
+
