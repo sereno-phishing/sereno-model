@@ -66,3 +66,21 @@ Limitación que se declara: con solo la URL no se distingue un documento legíti
 ## 2026-11-11: sin remuestreo adicional
 
 Decisión de Andrés. El armado deja las clases parejas (40,265 y 40,265), así que no se aplica SMOTE ni otro remuestreo en entrenamiento. El balance sale del tope por dominio y del muestreo de las legítimas, que ocurren antes de la partición. Se descartó SMOTE porque ya no hay desbalance que corregir y porque genera ejemplos sintéticos en el espacio de características.
+
+## 2026-11-11: características de host solo desde el texto de la URL
+
+Decisión de Andrés. Las características de host se calculan únicamente a partir del texto de la URL, sin consultas de DNS ni de WHOIS ni ningún otro servicio externo. Es compatible con la Tabla 10 y con RES-01, que piden características intrínsecas de la URL.
+
+Se descartaron DNS y WHOIS por tres motivos. Primero, el phishing de PhishTank va de 2012 a 2026 y muchos de esos dominios ya no existen: una consulta hecha hoy enseñaría al modelo que un dominio caído es phishing, lo que no se cumple con un phishing recién publicado. Segundo, una consulta externa puede superar por sí sola los 200 ms de RNF-01. Tercero, sus respuestas cambian con el tiempo, así que la misma URL daría vectores distintos entre corridas.
+
+Limitación que se declara: se pierden señales como la antigüedad del dominio.
+
+## 2026-11-11: vector base sin características de listas
+
+Decisión de Andrés. El vector base tiene 24 características de longitud, conteo, proporción y entropía, definidas en `02-caracteristicas.md`. Cada una aparece en papers del corpus del TDP.
+
+Las características que dependen de una lista (palabras sospechosas, servicio acortador, marca en la URL y TLD sospechoso) quedan fuera del vector base y se agregan después como un paso medido aparte, para reportar con números cuánto aporta cada una. Motivos: una lista armada a mano no se puede rastrear a una fuente y una sacada de los propios datos es fuga; una característica «es acortador» vuelve a marcar plataformas enteras, lo que el tope por dominio buscaba evitar; y Kocyigit et al. (2024) señalan que la característica de marca no sirve en tiempo real por su costo.
+
+Se descartaron las representaciones aprendidas del texto (embeddings, TF-IDF, BERT) porque el ADD pide un vector definido de características léxicas y de host.
+
+Riesgo aceptado: si las listas aportan mucho, el primer F1 saldrá más bajo.

@@ -33,12 +33,16 @@ Fuente: ADD OE2 (secciones del componente de IA, Tablas 3, 5, 10 y 11, Figura 25
 
 | Tema | Pendiente | Fase |
 |---|---|---|
-| Características de host | Confirmar si se calculan solo desde el texto de la URL. "Intrínsecas" y RES-01 lo sugieren, pero el ADD no menciona DNS ni WHOIS | 2 |
 | Clave del caché | Andrés decidió usar la URL normalizada; falta corregir el backend, que usa el dominio (I-46) | Integración |
 | Forma del veredicto | El puerto `Classifier` del backend devuelve tres estados y el ADD define dos (I-49) | Integración |
+| URL en los errores | `InvalidUrlError` incluye la URL en su mensaje; el servidor no debe registrarlo tal cual (RNF-05) | Integración |
 
 ## Decidido en la Fase 1, compatible con el ADD
 
 - Entrenamiento y prueba se separan por dominio registrado, para que un mismo dominio no aparezca en ambos.
 - El balance de clases sale del armado del conjunto: tope de 500 URL de phishing por dominio y muestreo de las legítimas por estratos de forma. Ocurre antes de la partición, como dice la sección 8.2, y no se aplica otro remuestreo en entrenamiento.
 - El esquema y el «www.» quedan fuera del vector de características, salvo que el control de sesgo de fuente muestre que no delatan la fuente.
+
+## Decidido en la Fase 2, compatible con el ADD
+
+- Las características de host se calculan solo desde el texto de la URL, sin DNS, WHOIS ni otros servicios externos. El ADD pide características intrínsecas (Tabla 10, RES-01) y no menciona esas consultas.
