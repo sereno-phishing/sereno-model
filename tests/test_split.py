@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
+from sklearn.model_selection import StratifiedKFold
 
 from sereno_model.data import split as split_module
 from sereno_model.data.acquire import ChecksumMismatchError
@@ -121,10 +122,10 @@ def test_assigns_every_row_exactly_once(tmp_path):
     assert all(labels[url] == label for url, label in zip(frame["url"], frame["label"]))
 
 
-def test_no_group_and_no_url_appears_in_both_splits(tmp_path):
+def test_grouped_strategy_keeps_every_group_and_url_on_one_side(tmp_path):
     data_dir = make_assemble_run(tmp_path, sample_rows())
 
-    split(data_dir, now=NOW)
+    split(data_dir, strategy="grouped", now=NOW)
 
     frame = read_split(data_dir)
     train, test = frame[frame["split"] == "train"], frame[frame["split"] == "test"]
@@ -285,7 +286,8 @@ def test_report_describes_the_run_and_each_split(tmp_path):
     parameters = report["parameters"]
     assert (parameters["seed"], parameters["n_splits"]) == (20261111, 5)
     assert parameters["test_fold"] == 0
-    assert "StratifiedGroupKFold" in parameters["splitter"]
+    assert parameters["strategy"] == "random"
+    assert parameters["splitter"].startswith("sklearn.model_selection.StratifiedKFold(")
 
     written = read_split(data_dir)
     for name in ("train", "test"):
@@ -298,7 +300,7 @@ def test_report_describes_the_run_and_each_split(tmp_path):
         assert summary["synthetic"] == int(part["synthetic"].sum())
         assert summary["synthetic_share"] == round(summary["synthetic"] / len(part), 6)
     assert report["groups"]["total"] == written["group"].nunique()
-    assert report["groups"]["total"] == sum(
+    assert report["groups"]["total"] <= sum(
         report["splits"][name]["groups"] for name in ("train", "test")
     )
 
@@ -310,7 +312,7 @@ def test_report_describes_the_run_and_each_split(tmp_path):
 def test_report_lists_the_largest_groups_with_their_split(tmp_path):
     data_dir = make_assemble_run(tmp_path, sample_rows())
 
-    report = split(data_dir, now=NOW)
+    report = split(data_dir, strategy="grouped", now=NOW)
 
     largest = report["groups"]["largest"]
     assert len(largest) == 10
@@ -385,7 +387,7 @@ def test_report_gives_the_phishing_date_range_and_says_legitimate_has_none(tmp_p
 def test_leakage_controls_follow_the_decision_gates_of_the_skill(tmp_path):
     data_dir = make_assemble_run(tmp_path, sample_rows())
 
-    report = split(data_dir, now=NOW)
+    report = split(data_dir, strategy="grouped", now=NOW)
 
     assert [entry["control"] for entry in report["leakage_controls"]] == CONTROLS
     found = controls(report)
@@ -409,7 +411,7 @@ def test_leakage_controls_follow_the_decision_gates_of_the_skill(tmp_path):
 
 
 def test_leakage_controls_fail_when_a_url_or_a_domain_is_on_both_sides():
-    found = {entry["control"]: entry for entry in leakage_controls(leaky_frame())}
+    found = {entry["control"]: entry for entry in leakage_controls(leaky_frame(), "grouped")}
 
     assert found["duplicates"]["status"] == "fail"
     assert found["duplicates"]["evidence"] == {"normalized_urls_in_both_splits": 1}
@@ -419,11 +421,13 @@ def test_leakage_controls_fail_when_a_url_or_a_domain_is_on_both_sides():
 
 def test_writes_nothing_when_a_leakage_control_fails(tmp_path, monkeypatch):
     data_dir = make_assemble_run(tmp_path, sample_rows())
-    alternate = lambda labels, groups, seed, n_splits: [i % 2 == 0 for i in range(len(labels))]
+    alternate = lambda labels, groups, seed, n_splits, strategy: [
+        i % 2 == 0 for i in range(len(labels))
+    ]
     monkeypatch.setattr(split_module, "held_out_mask", alternate)
 
     with pytest.raises(LeakageError, match="domains"):
-        split(data_dir, now=NOW)
+        split(data_dir, strategy="grouped", now=NOW)
 
     assert not (data_dir / "processed" / STAMP).exists()
 
@@ -452,3 +456,67 @@ def test_cli_runs_the_split_and_prints_a_summary(tmp_path, capsys):
     assert report["partition_hash"]["value"] in output
     assert "train" in output and "test" in output
     assert "duplicates" in output and "pass" in output
+
+
+def test_default_strategy_holds_out_one_fold_of_a_shuffled_stratified_kfold(tmp_path):
+    data_dir = make_assemble_run(tmp_path, sample_rows(domains=60))
+
+    report = split(data_dir, now=NOW)
+
+    frame = read_split(data_dir)
+    splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=20261111)
+    _, test_rows = next(iter(splitter.split(frame[["url"]], frame["label"])))
+    assert set(frame.loc[frame["split"] == "test", "url"]) == set(frame["url"].iloc[test_rows])
+    assert report["parameters"]["strategy"] == "random"
+    assert "StratifiedGroupKFold" not in report["parameters"]["splitter"]
+
+
+def test_grouped_strategy_uses_stratified_group_kfold_and_records_it(tmp_path):
+    data_dir = make_assemble_run(tmp_path, sample_rows(domains=60))
+
+    random_report = split(data_dir, now=NOW)
+    grouped_report = split(data_dir, strategy="grouped", now=LATER)
+
+    parameters = grouped_report["parameters"]
+    assert parameters["strategy"] == "grouped"
+    assert parameters["splitter"].startswith("sklearn.model_selection.StratifiedGroupKFold(")
+    assert random_report["partition_hash"] != grouped_report["partition_hash"]
+
+
+def test_random_strategy_reports_shared_domains_as_a_documented_exception(tmp_path):
+    data_dir = make_assemble_run(tmp_path, sample_rows(domains=60))
+
+    report = split(data_dir, now=NOW)
+
+    found = controls(report)
+    assert found["duplicates"]["status"] == "pass"
+    assert found["domains"]["status"] == "reported"
+    assert found["domains"]["evidence"]["groups_in_both_splits"] > 0
+    assert "grouped" in found["domains"]["note"]
+
+
+def test_random_strategy_still_fails_on_a_duplicated_url():
+    found = {entry["control"]: entry for entry in leakage_controls(leaky_frame(), "random")}
+
+    assert found["duplicates"]["status"] == "fail"
+    assert found["domains"]["status"] == "reported"
+
+
+def test_rejects_an_unknown_strategy(tmp_path):
+    data_dir = make_assemble_run(tmp_path, sample_rows())
+
+    with pytest.raises(ValueError, match="strategy"):
+        split(data_dir, strategy="temporal", now=NOW)
+
+    assert not (data_dir / "processed" / STAMP).exists()
+
+
+def test_cli_takes_the_grouped_strategy(tmp_path, capsys):
+    data_dir = make_assemble_run(tmp_path, sample_rows())
+
+    main(["--data-dir", str(data_dir), "--strategy", "grouped"])
+
+    reports = list((data_dir / "processed").glob("*/split_report.json"))
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report["parameters"]["strategy"] == "grouped"
+    assert "grouped" in capsys.readouterr().out

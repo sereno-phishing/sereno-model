@@ -253,6 +253,9 @@ def build(
             "dir": f"processed/{run}",
             "partition_hash": recorded["partition_hash"]["value"],
             "seed": recorded["parameters"]["seed"],
+            # Split runs older than the strategy option were all grouped by registered domain.
+            "strategy": recorded["parameters"].get("strategy", "grouped"),
+            "splitter": recorded["parameters"]["splitter"],
         },
         "assemble_run": recorded["assemble_run"],
         "feature_set": {

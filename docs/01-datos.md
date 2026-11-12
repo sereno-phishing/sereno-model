@@ -31,7 +31,7 @@ Obtener un conjunto de URLs etiquetadas (phishing o legítima), limpio, con hash
 | Combinar las URLs legítimas sin sesgo de forma | Decidido el 2026-11-11; el sesgo con ruta se verifica en la Fase 2 |
 | Limpieza, duplicados y etiquetas contradictorias | Hecho el 2026-11-11; ver el registro |
 | Fechas de las URLs legítimas | No disponibles: las fuentes no las traen. El reporte de la partición da el rango de fechas del phishing y lo declara |
-| Separar entrenamiento y prueba por dominio | Implementado el 2026-11-11; ver el registro |
+| Partición de entrenamiento y prueba | Aleatoria y estratificada desde el 2026-11-12, como en los papers; la agrupada por dominio queda como análisis de robustez. Ver el registro |
 | Remuestrear solo el entrenamiento | Decidido el 2026-11-11: sin remuestreo adicional, porque las clases quedan parejas tras el armado |
 
 ## Criterio de salida
@@ -213,6 +213,23 @@ Controles de duplicados y de dominios: 0 URL y 0 grupos en ambos lados. El mayor
 La distancia de forma entre clases queda en 0.003 sin ruta y 0.713 con ruta en entrenamiento, y en 0.012 sin ruta y 0.617 con ruta en prueba. La de las URL con ruta se trata en las características de la Fase 2.
 
 Las clases quedan parejas, así que el muestreo de las legítimas ya cumple el papel del remuestreo por desbalance que pide el ADD, y ocurre antes de la partición, como indica su sección 8.2. Falta confirmar con Andrés si hace falta otro remuestreo en entrenamiento.
+
+### 2026-11-12: partición aleatoria como en los papers
+
+Decisión de Andrés, tomada en la Fase 3: la partición pasa a ser aleatoria y estratificada, como la de los papers del corpus (P02 y otros evalúan con particiones aleatorias). La partición agrupada por dominio registrado se conserva como análisis de robustez.
+
+`python -m sereno_model.data.split --data-dir data` usa ahora `StratifiedKFold(n_splits=5, shuffle=True, random_state=20261111)` y deja como prueba el pliegue de la posición 0, con la misma semilla, el mismo orden de filas y los mismos archivos de salida. `--strategy grouped` reproduce la partición anterior con `StratifiedGroupKFold` por dominio. El reporte guarda la estrategia (`parameters.strategy`) y el particionador exacto (`parameters.splitter`), y la Fase 2 los copia en `features_report.json`.
+
+Con la partición aleatoria, el control de dominios ya no falla: se reporta como excepción documentada, con el número de dominios que quedan en ambos lados. El control de duplicados sigue fallando si una URL normalizada aparece en los dos lados.
+
+Corrida `20261112T232911Z` sobre el conjunto `20261111T222725Z`, semilla 20261111. Hash de la partición: `795e11153ee5805db62ef9ae573be198f4cdd960dd252f8d85648a8bb779b427`.
+
+| | URL | Phishing | Legítimas | Grupos |
+|---|---|---|---|---|
+| Entrenamiento | 64,424 | 32,212 | 32,212 | 37,469 |
+| Prueba | 16,106 | 8,053 | 8,053 | 10,621 |
+
+Controles: 0 URL normalizadas en ambos lados; 2,457 dominios registrados con URL en ambos lados (reportado). La distancia de forma entre clases queda en 0.003 sin ruta y 0.692 con ruta en entrenamiento, y en 0.011 sin ruta y 0.698 con ruta en prueba.
 
 ### 2026-11-11: términos de PhishTank
 

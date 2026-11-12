@@ -164,6 +164,8 @@ def test_report_traces_the_inputs_the_code_and_the_feature_set(tmp_path):
         "dir": f"processed/{SPLIT_STAMP}",
         "partition_hash": split_report["partition_hash"]["value"],
         "seed": 7,
+        "strategy": "random",
+        "splitter": split_report["parameters"]["splitter"],
     }
     assert report["assemble_run"] == split_report["assemble_run"]
     assert report["feature_set"]["version"] == FEATURE_SET_VERSION
