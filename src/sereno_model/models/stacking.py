@@ -258,29 +258,56 @@ def _plain(value):
     return value.item() if isinstance(value, np.generic) else value
 
 
-def fit_stacking(
-    frame: pd.DataFrame,
+@dataclass
+class CrossValidation:
+    """Everything the grouped (or any given) folds produce, before the final refit."""
+
+    folds: list
+    best_params: dict
+    search_best_f1: dict
+    tuned: dict
+    oof_base: dict
+    meta_features: np.ndarray
+    oof_meta: np.ndarray
+    threshold: dict
+    cv_metrics: dict
+    durations: dict = field(default_factory=dict)
+
+
+def _progress(message: str) -> None:
+    """Print a timestamped progress line so long runs show they are alive."""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def cross_validate(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    folds: list,
+    search_spaces: dict | None = None,
     n_iter: int = DEFAULT_N_ITER,
-    n_splits: int = DEFAULT_N_SPLITS,
     seed: int = DEFAULT_SEED,
     n_jobs: int = 1,
     threshold_grid: list[float] | None = None,
-    model_version: str | None = None,
-    created_at: str | None = None,
-) -> FitResult:
-    """Tune, stack and refit on ``frame``, the training split only."""
+    estimator_factory=None,
+) -> CrossValidation:
+    """Search, out-of-fold predictions, meta-model scores and threshold over ``folds``.
+
+    ``estimator_factory(name, seed)`` builds each untuned base model; it defaults to
+    ``base_estimator``. A factory that returns a pipeline lets every transformer in it be fitted
+    inside each training fold, and its ``search_spaces`` keys then carry the step prefix.
+    """
+    spaces = SEARCH_SPACES if search_spaces is None else search_spaces
+    make = base_estimator if estimator_factory is None else estimator_factory
     grid = make_threshold_grid() if threshold_grid is None else list(threshold_grid)
-    columns = feature_columns(frame)
-    X = frame[columns]
-    y = frame["label"].to_numpy().astype(int)
-    folds = grouped_folds(y, frame["group"], n_splits=n_splits, seed=seed)
+    y = np.asarray(y).astype(int)
 
     started = time.perf_counter()
     best_params, search_best_f1 = {}, {}
     for name in BASE_MODEL_NAMES:
+        _progress(f"search {name}: {n_iter} candidates x {len(folds)} folds")
         search = RandomizedSearchCV(
-            base_estimator(name, seed),
-            SEARCH_SPACES[name],
+            make(name, seed),
+            spaces[name],
             n_iter=n_iter,
             scoring="f1",
             cv=folds,
@@ -291,12 +318,13 @@ def fit_stacking(
         search.fit(X, y)
         best_params[name] = {key: _plain(value) for key, value in search.best_params_.items()}
         search_best_f1[name] = float(search.best_score_)
+        _progress(f"search {name} done: best CV F1 {search_best_f1[name]:.4f}")
     search_seconds = time.perf_counter() - started
 
+    _progress("out-of-fold predictions and meta-model")
     started = time.perf_counter()
     tuned = {
-        name: base_estimator(name, seed).set_params(**best_params[name])
-        for name in BASE_MODEL_NAMES
+        name: make(name, seed).set_params(**best_params[name]) for name in BASE_MODEL_NAMES
     }
     oof_base = {
         name: oof_probabilities(estimator, X, y, folds, n_jobs=n_jobs)
@@ -311,16 +339,51 @@ def fit_stacking(
         name: fold_metrics(y, oof_base[name], folds, BASE_THRESHOLD) for name in BASE_MODEL_NAMES
     }
     cv_metrics["stacking"] = fold_metrics(y, oof_meta, folds, threshold["threshold"])
+    return CrossValidation(
+        folds=folds,
+        best_params=best_params,
+        search_best_f1=search_best_f1,
+        tuned=tuned,
+        oof_base=oof_base,
+        meta_features=meta_features,
+        oof_meta=oof_meta,
+        threshold=threshold,
+        cv_metrics=cv_metrics,
+        durations={
+            "search_seconds": round(search_seconds, 3),
+            "oof_seconds": round(oof_seconds, 3),
+        },
+    )
+
+
+def fit_stacking(
+    frame: pd.DataFrame,
+    n_iter: int = DEFAULT_N_ITER,
+    n_splits: int = DEFAULT_N_SPLITS,
+    seed: int = DEFAULT_SEED,
+    n_jobs: int = 1,
+    threshold_grid: list[float] | None = None,
+    model_version: str | None = None,
+    created_at: str | None = None,
+) -> FitResult:
+    """Tune, stack and refit on ``frame``, the training split only."""
+    columns = feature_columns(frame)
+    X = frame[columns]
+    y = frame["label"].to_numpy().astype(int)
+    folds = grouped_folds(y, frame["group"], n_splits=n_splits, seed=seed)
+    cv = cross_validate(
+        X, y, folds, n_iter=n_iter, seed=seed, n_jobs=n_jobs, threshold_grid=threshold_grid
+    )
 
     started = time.perf_counter()
-    base_models = {name: estimator.fit(X, y) for name, estimator in tuned.items()}
-    meta_model = meta_estimator(seed).fit(meta_features, y)
+    base_models = {name: estimator.fit(X, y) for name, estimator in cv.tuned.items()}
+    meta_model = meta_estimator(seed).fit(cv.meta_features, y)
     refit_seconds = time.perf_counter() - started
 
     model = StackingModel(
         base_models,
         meta_model,
-        threshold["threshold"],
+        cv.threshold["threshold"],
         columns,
         FEATURE_SET_VERSION,
         model_version=model_version,
@@ -329,15 +392,11 @@ def fit_stacking(
     return FitResult(
         model=model,
         folds=folds,
-        best_params=best_params,
-        search_best_f1=search_best_f1,
-        oof_base=oof_base,
-        oof_meta=oof_meta,
-        threshold=threshold,
-        cv_metrics=cv_metrics,
-        durations={
-            "search_seconds": round(search_seconds, 3),
-            "oof_seconds": round(oof_seconds, 3),
-            "refit_seconds": round(refit_seconds, 3),
-        },
+        best_params=cv.best_params,
+        search_best_f1=cv.search_best_f1,
+        oof_base=cv.oof_base,
+        oof_meta=cv.oof_meta,
+        threshold=cv.threshold,
+        cv_metrics=cv.cv_metrics,
+        durations={**cv.durations, "refit_seconds": round(refit_seconds, 3)},
     )
