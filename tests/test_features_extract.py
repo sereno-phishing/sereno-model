@@ -55,7 +55,7 @@ def shannon_bits(text: str) -> float:
 def test_feature_names_follow_the_documented_order_and_version():
     assert FEATURE_NAMES == DOCUMENTED_ORDER
     assert isinstance(FEATURE_NAMES, tuple)
-    assert FEATURE_SET_VERSION == "1"
+    assert FEATURE_SET_VERSION == "2"
     assert FLOAT_FEATURES == {"digit_ratio", "url_entropy"}
 
 
@@ -122,7 +122,7 @@ def test_www_is_removed_before_measuring_length_and_subdomains():
     found = named("http://www.a.b.example.com/")
 
     assert (found["host_length"], found["subdomain_count"]) == (len("a.b.example.com"), 2)
-    assert found["url_length"] == len("a.b.example.com/")
+    assert found["url_length"] == len("a.b.example.com")
     assert found["dot_count"] == 3
 
 
@@ -194,6 +194,25 @@ def test_a_www_prefix_and_the_scheme_never_change_the_vector(rest):
     assert extract_features(f"http://www.{rest}") == extract_features(f"https://{rest}")
 
 
+@pytest.mark.parametrize(
+    ("with_slash", "without_slash"),
+    [
+        ("https://example.com/", "https://example.com"),
+        ("https://example.com/a/b/", "https://example.com/a/b"),
+        ("https://example.com//", "https://example.com"),
+    ],
+)
+def test_a_slash_that_ends_the_url_never_changes_the_vector(with_slash, without_slash):
+    # Sources differ in whether they write the final slash; it must not tell them apart.
+    assert extract_features(with_slash) == extract_features(without_slash)
+
+
+def test_a_slash_before_the_query_is_kept():
+    assert extract_features("https://example.com/a/?x=1") != extract_features(
+        "https://example.com/a?x=1"
+    )
+
+
 @pytest.mark.parametrize("port", ["80", "443", "8080"])
 def test_the_scheme_does_not_reach_the_vector_through_the_port(port):
     # Normalization keeps ``:443`` on http and drops it on https; the vector must not notice.
@@ -239,13 +258,14 @@ def test_has_at_also_sees_the_path_and_the_query():
     ("url", "length", "depth", "slashes"),
     [
         ("http://example.com", 0, 0, 0),
-        ("http://example.com/", 1, 0, 1),
+        ("http://example.com/", 0, 0, 0),
         ("http://example.com/a", 2, 1, 1),
-        ("http://example.com/a/", 3, 1, 2),
-        ("http://example.com/a//b/", 6, 2, 4),
+        ("http://example.com/a/", 2, 1, 1),
+        ("http://example.com/a//b///", 5, 2, 3),
+        ("http://example.com/a/?x=1", 3, 1, 2),
     ],
 )
-def test_path_length_and_depth(url, length, depth, slashes):
+def test_path_length_and_depth_ignore_the_slashes_that_end_the_url(url, length, depth, slashes):
     found = named(url)
 
     assert (found["path_length"], found["path_depth"], found["slash_count"]) == (

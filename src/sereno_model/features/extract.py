@@ -1,4 +1,4 @@
-"""Base feature vector of a URL, computed from its text alone (feature set version 1).
+"""Base feature vector of a URL, computed from its text alone (feature set version 2).
 
 The 24 features, their order and their definitions are the ones approved in
 ``docs/02-caracteristicas.md``. The module is shared by the training pipeline and by the
@@ -8,7 +8,8 @@ the network or the disk and never logs the URL, which lives only in memory while
 Two terms are used throughout:
 
 * *host*: the host of the normalized URL without a leading ``www.``;
-* *measured text*: the normalized URL without the scheme, without ``://`` and with that host.
+* *measured text*: the normalized URL without the scheme, without ``://``, with that host and
+  without the slashes that end the URL.
 
 Neither the scheme nor the ``www.`` prefix reaches any feature, so ``http://www.example.com/a``
 and ``https://example.com/a`` produce the same vector.
@@ -33,8 +34,10 @@ Cases the design document leaves open, as decided here:
   (``host:``) gives 0, although its colon stays in the measured text.
 * Userinfo: ``user:password@`` stays in the measured text, so it counts for ``has_at``, the
   length, the symbol counts and the entropy; it is not part of the host.
-* Path: an empty path has length 0 and depth 0; ``/`` has length 1 and depth 0. Depth counts
-  the non-empty segments between slashes.
+* Path: the slashes that end the URL are not measured, so ``/a/b/`` counts as ``/a/b`` and a
+  bare ``/`` as an empty path; sources differ in whether they write them (version 2 of the
+  feature set, after Ghalechyan et al., 2024). A slash that precedes a query is kept. An empty
+  path has length 0 and depth 0. Depth counts the non-empty segments between slashes.
 * Query: an absent query and an empty one (a bare ``?``) both give length 0 and no parameters;
   the ``?`` itself is never part of the length. Parameters are the non-empty pieces between
   ``&``, so ``a=1&&b=2&`` has two.
@@ -52,7 +55,7 @@ from collections import Counter
 from sereno_model.data.domains import _extractor
 from sereno_model.data.normalize import DEFAULT_PORTS, UrlParts, parse_url
 
-FEATURE_SET_VERSION = "1"
+FEATURE_SET_VERSION = "2"
 
 FEATURE_NAMES = (
     "url_length",
@@ -103,13 +106,19 @@ def visible_port(parts: UrlParts) -> str | None:
     return None if parts.port in DEFAULT_PORT_NUMBERS else parts.port
 
 
+def measured_path(parts: UrlParts) -> str:
+    """The path of ``parts`` without the slashes that end the URL; kept whole before a query."""
+    return parts.path.rstrip("/") if parts.query is None else parts.path
+
+
 def measured_text(parts: UrlParts) -> str:
-    """The normalized URL without the scheme, ``://``, the host ``www.`` and a default port."""
+    """The normalized URL without the scheme, ``://``, the host ``www.``, a default port and
+    the slashes that end it."""
     userinfo = "" if parts.userinfo is None else f"{parts.userinfo}@"
     port = visible_port(parts)
     port = "" if port is None else f":{port}"
     query = "" if parts.query is None else f"?{parts.query}"
-    return f"{userinfo}{strip_www(parts.host)}{port}{parts.path}{query}"
+    return f"{userinfo}{strip_www(parts.host)}{port}{measured_path(parts)}{query}"
 
 
 def is_ip_address(host: str) -> bool:
@@ -150,6 +159,7 @@ def features_from_parts(parts: UrlParts) -> FeatureVector:
     """The feature vector of an already parsed URL, in the order of ``FEATURE_NAMES``."""
     host = strip_www(parts.host)
     text = measured_text(parts)
+    path = measured_path(parts)
     query = parts.query or ""
     host_is_ip = is_ip_address(host)
     subdomain_count, tld_length = (0, 0) if host_is_ip else _host_structure(host)
@@ -165,9 +175,9 @@ def features_from_parts(parts: UrlParts) -> FeatureVector:
         int(host_is_ip),
         int(bool(visible_port(parts))),
         tld_length,
-        len(parts.path),
-        sum(1 for segment in parts.path.split("/") if segment),
-        int("//" in parts.path or "//" in query),
+        len(path),
+        sum(1 for segment in path.split("/") if segment),
+        int("//" in path or "//" in query),
         len(query),
         sum(1 for piece in query.split("&") if piece),
         digit_count,
