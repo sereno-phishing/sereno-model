@@ -80,3 +80,88 @@ Decisiones propias de esta tarea:
 - Las métricas de validación cruzada del Stacking se calculan con el umbral elegido en esos mismos pliegues, por lo que son algo optimistas; la cifra que se reporta en la tesis es la de la prueba ciega.
 
 La prueba ciega no se lee en esta tarea. Las pruebas automáticas usan matrices sintéticas pequeñas con el esquema real.
+
+### 2026-11-12: corrida oficial de entrenamiento 1.0.0
+
+Comando: `python -m sereno_model.models.train --version 1.0.0 --n-jobs 16`, desde el commit `6da51eb` con el repositorio limpio. Semilla 20261111; matriz de entrenamiento con hash `308d6b88…41eb`. Duración: 160 s. Reporte en `artifacts/1.0.0/report.json`.
+
+| Modelo | F1 en validación cruzada | Hiperparámetros elegidos |
+|---|---|---|
+| Random Forest | 0.8459 | 62 árboles, profundidad 10 |
+| XGBoost | 0.8732 | 54 árboles, profundidad 9, tasa 0.19 |
+| LightGBM | 0.8716 | 89 árboles, profundidad 9, tasa 0.18 |
+| Stacking | 0.8763 (precisión 0.8704, recall 0.8826, exactitud 0.8755) | Umbral 0.37 |
+
+El F1 en validación cruzada queda por debajo de la meta del ADD (0.96). La prueba ciega no se usó.
+
+### 2026-11-12: diagnóstico de la brecha con la meta (exploración)
+
+Corrida de exploración, no citable como resultado final. Comando: `python -m sereno_model.models.diagnose --n-jobs 16`, desde el commit `6da51eb` con cambios sin commit (`reportable: false`). Solo la matriz de entrenamiento (hash `308d6b88…41eb`), semilla 20261111, 5 pliegues, 20 candidatos por búsqueda. Duración: 757 s. Reporte en `artifacts/diagnostics/20261112T153735Z/report.json`. Código: `src/sereno_model/models/diagnose.py`; la parte de validación cruzada de `stacking.py` se separó en `cross_validate` para reutilizarla sin cambiar el resultado.
+
+**1. Efecto de la agrupación por dominio.** Mismos rangos de P09. La variante agrupada reproduce la corrida 1.0.0 (mismos hiperparámetros, F1 0.8763, umbral 0.37).
+
+| F1 en validación cruzada | Random Forest | XGBoost | LightGBM | Stacking (umbral) |
+|---|---|---|---|---|
+| Pliegues agrupados por dominio | 0.8459 | 0.8732 | 0.8716 | 0.8763 (0.37) |
+| Pliegues sin agrupar | 0.8620 | 0.8900 | 0.8868 | 0.8923 (0.43) |
+
+Stacking sin agrupar: precisión 0.8979, recall 0.8868, exactitud 0.8930.
+
+**2. Efecto de los rangos.** Pliegues agrupados con rangos propios más amplios, sin sustento en el corpus: RF 100 a 500 árboles, profundidad {10, 20, 30, sin límite}, 1 a 5 muestras por hoja; XGBoost 100 a 600 árboles, profundidad 4 a 12, tasa 0.03 a 0.30; LightGBM 100 a 600 árboles, profundidad {sin límite, 8 a 16}, 31 a 255 hojas, tasa 0.03 a 0.30.
+
+| Modelo | F1 con P09 | F1 con rangos amplios | Hiperparámetros elegidos (rangos amplios) |
+|---|---|---|---|
+| Random Forest | 0.8459 | 0.8687 | 111 árboles, profundidad 20, 2 muestras por hoja |
+| XGBoost | 0.8732 | 0.8738 | 234 árboles, profundidad 7, tasa 0.08 |
+| LightGBM | 0.8716 | 0.8727 | 302 árboles, profundidad 9, 32 hojas, tasa 0.13 |
+| Stacking | 0.8763 | 0.8773 (umbral 0.41) | |
+
+**3. Análisis de errores** del Stacking agrupado con rangos de P09, sobre sus puntajes fuera de pliegue con el umbral 0.37: 28,429 VP, 4,239 FP, 27,972 VN y 3,783 FN (tasa de falsos positivos 0.1316).
+
+| Subgrupo | Filas | Phishing | F1 | Precisión | Recall | Tasa de FP |
+|---|---|---|---|---|---|---|
+| Fuente PhishTank | 21,322 | 21,322 | 0.9466 | 1.0000 | 0.8986 | n. a. |
+| Fuente url_phish_2026 | 37,063 | 8,787 | 0.7924 | 0.7120 | 0.8934 | 0.1123 |
+| Fuente hannousse_2021 | 7,477 | 4,446 | 0.7957 | 0.7838 | 0.8079 | 0.3270 |
+| Fuente Majestic Million (= filas sintéticas) | 906 | 0 | n. a. | n. a. | n. a. | 0.0806 |
+| Dominios recortados por el tope (plataformas y acortadores) | 6,053 | 6,000 | 0.9879 | 0.9948 | 0.9812 | 0.5849 (53 legítimas) |
+| Resto de dominios | 58,370 | 26,212 | 0.8513 | 0.8427 | 0.8600 | 0.1309 |
+
+Una fila con varias fuentes cuenta en cada una; hay 2,345 filas así. Los dominios recortados son los 16 que registra `assemble_report.json`; no existe en el código otra lista de acortadores o plataformas compartidas.
+
+Dominios registrados más frecuentes entre los errores (solo conteos, sin URL):
+
+- Falsos positivos: `wordpress.com` 99, `academic.ru` 50, `inrae.fr` 38, `tumblr.com` 38, `techtarget.com` 37, `youtube.com` 32, `facebook.com` 27, `unistra.fr` 21, `univ-grenoble-alpes.fr` 20, `wikipedia.org` 19.
+- Falsos negativos: `google.com` 70, `linkin.bio` 66, `ln.run` 66, `flowcode.com` 58, `urlz.fr` 37, `tinyurl.com` 30, `web.app` 28, `mytemp.website` 27, `ghost.io` 24, `linqapp.com` 20.
+
+Correlación entre modelos base (probabilidades fuera de pliegue; errores con umbral 0.5):
+
+| Par | Correlación de probabilidades | Correlación de errores |
+|---|---|---|
+| RF y XGBoost | 0.946 | 0.706 |
+| RF y LightGBM | 0.947 | 0.717 |
+| XGBoost y LightGBM | 0.986 | 0.859 |
+
+De 64,423 filas, 53,119 no las falla ningún modelo base, 3,317 las falla uno, 2,038 dos y 5,949 los tres.
+
+Lectura: la agrupación por dominio resta 0.016 de F1 al Stacking y los rangos amplios suman 0.001; ninguna de las dos acerca la cifra a 0.96. Los modelos base cometen errores muy parecidos, en especial XGBoost y LightGBM, y 5,949 filas las fallan los tres. Las fuentes con ambas clases (url_phish_2026 y hannousse_2021) quedan cerca de 0.79 de F1, mientras PhishTank, que solo aporta phishing, llega a 0.95. Los falsos negativos se concentran en acortadores y plataformas de alojamiento; los falsos positivos, en blogs, sitios académicos y redes sociales.
+
+### 2026-11-12: medición de las características de lista (exploración)
+
+Ver `02-caracteristicas.md`, registro del 2026-11-12: con los tres grupos el F1 del Stacking en validación cruzada pasa de 0.8763 a 0.8821; la adopción queda pendiente de Andrés.
+
+### 2026-11-12: TF-IDF de caracteres (exploración)
+
+Informe `artifacts/diagnostics/20261112T192824Z/` (no citable: árbol con cambios sin commit). TF-IDF de caracteres según P02 (`analyzer='char'`, `max_features=5000`), ajustado dentro de cada pliegue. Búsqueda con 12 candidatos por modelo en las variantes con TF-IDF y 20 en A. Duración total: 7,300 s.
+
+| Variante | Pliegues | RF | XGBoost | LightGBM | Stacking | Umbral | Diferencia con A |
+|---|---|---|---|---|---|---|---|
+| A: 24 características v2 | aleatorios | 0.8620 | 0.8900 | 0.8868 | 0.8923 | 0.43 | — |
+| B: solo TF-IDF (n 1-3) | aleatorios | 0.8584 | 0.9398 | 0.9465 | 0.9476 | 0.43 | +0.0552 |
+| C: v2 + TF-IDF (n 1-3) | aleatorios | 0.8702 | 0.9464 | 0.9506 | 0.9519 | 0.50 | +0.0595 |
+| D: v2 + TF-IDF (n 3-5) | aleatorios | 0.8715 | 0.9385 | 0.9459 | 0.9465 | 0.41 | +0.0541 |
+| E: C con pliegues agrupados | agrupados por dominio | 0.8463 | 0.9313 | 0.9357 | 0.9381 | 0.42 | +0.0458 |
+
+Variante C: latencia de inferencia p50 6.0 ms y p95 6.9 ms por URL (RNF-01: ≤ 200 ms); modelo de 2.3 MB.
+
+Lectura: C es la mejor (0.9519) y queda a 0.008 de la meta de 0.96. El TF-IDF aporta casi toda la mejora; las 24 características v2 suman poco encima. Con pliegues agrupados la mejora se mantiene (+0.046), así que no depende de que un mismo dominio aparezca en entrenamiento y validación. El Stacking supera a cada modelo base en todas las variantes. RF no aprovecha el TF-IDF.

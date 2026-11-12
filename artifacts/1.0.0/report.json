@@ -1,0 +1,501 @@
+{
+  "created_at": "2026-11-12T15:25:53Z",
+  "run_type": "model selection and training: cross-validation on the training split only",
+  "reportable": true,
+  "command": "python -m sereno_model.models.train --version 1.0.0 --n-jobs 16",
+  "git": {
+    "commit": "6da51eb28504fee7f7213d16c84eac9f90f4ad06",
+    "clean": true
+  },
+  "seed": 20261111,
+  "model": {
+    "version": "1.0.0",
+    "file": "model.joblib",
+    "class": "sereno_model.models.stacking.StackingModel",
+    "output": "score(X) is the meta-model phishing probability in [0, 1]; predict(X) is 1 (phishing) when the score reaches the threshold, else 0 (legitimate)",
+    "loading": "joblib.load; needs sereno_model and the library versions below"
+  },
+  "input": {
+    "features_run": "processed/20261112T025607Z",
+    "train_file": "features_train.parquet",
+    "train_rows": 64423,
+    "train_phishing": 32212,
+    "train_legitimate": 32211,
+    "train_content_hash": "308d6b88e7c45d1aa4e08a22c1a5fe9cc2ef08017a7cab27c38da716fd9a41eb",
+    "train_content_hash_verified": true,
+    "partition_hash": "d7121875adbdf535a121c23afc4958f3e4b0b35e5b76a6811019948a55f89edc",
+    "split_run": "processed/20261111T222736Z",
+    "split_seed": 20261111,
+    "assemble_run": {
+      "dir": "processed/20261111T222725Z",
+      "content_hash": "b3a2e8994c11aeb0e94e8c306e206df664ffcd29eb04e7e15135d449837b5f9c"
+    },
+    "test_split": "not read"
+  },
+  "feature_set": {
+    "version": "2",
+    "names": [
+      "url_length",
+      "dot_count",
+      "has_at",
+      "host_length",
+      "subdomain_count",
+      "host_hyphen_count",
+      "host_is_ip",
+      "has_port",
+      "tld_length",
+      "path_length",
+      "path_depth",
+      "has_double_slash",
+      "query_length",
+      "query_param_count",
+      "digit_count",
+      "digit_ratio",
+      "question_mark_count",
+      "equals_count",
+      "ampersand_count",
+      "percent_count",
+      "underscore_count",
+      "tilde_count",
+      "slash_count",
+      "url_entropy"
+    ]
+  },
+  "cv": {
+    "method": "StratifiedGroupKFold, shuffled, grouped by registered domain",
+    "n_splits": 5,
+    "seed": 20261111,
+    "grouping_source": "own decision inherited from phase 1; the corpus does not cover it",
+    "reuse": "the same folds serve the search, the out-of-fold predictions and the threshold",
+    "folds": [
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6443,
+        "validation_groups": 7304
+      },
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6443,
+        "validation_groups": 7296
+      },
+      {
+        "validation_rows": 12883,
+        "validation_phishing": 6442,
+        "validation_groups": 7302
+      },
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6442,
+        "validation_groups": 7297
+      },
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6442,
+        "validation_groups": 7306
+      }
+    ]
+  },
+  "search": {
+    "method": "RandomizedSearchCV, scoring F1, over the grouped folds",
+    "method_source": "P09",
+    "n_iter": 20,
+    "n_iter_source": "own decision; the corpus does not give a search budget",
+    "spaces": {
+      "random_forest": {
+        "n_estimators": [
+          50,
+          100
+        ],
+        "max_depth": [
+          1,
+          10
+        ]
+      },
+      "xgboost": {
+        "n_estimators": [
+          25,
+          100
+        ],
+        "max_depth": [
+          6,
+          10
+        ],
+        "learning_rate": [
+          0.05,
+          0.2
+        ]
+      },
+      "lightgbm": {
+        "n_estimators": [
+          20,
+          100
+        ],
+        "max_depth": [
+          6,
+          10
+        ],
+        "learning_rate": [
+          0.05,
+          0.2
+        ]
+      }
+    },
+    "spaces_source": "P09 ranges, both ends included; learning rates on a 0.01 grid (own decision)"
+  },
+  "base_models": {
+    "random_forest": {
+      "best_params": {
+        "n_estimators": 62,
+        "max_depth": 10
+      },
+      "search_best_f1": 0.845888,
+      "cv": {
+        "threshold": 0.5,
+        "mean": {
+          "f1": 0.845888,
+          "precision": 0.900331,
+          "recall": 0.797746,
+          "accuracy": 0.854757
+        },
+        "per_fold": [
+          {
+            "f1": 0.826254,
+            "precision": 0.891605,
+            "recall": 0.769828,
+            "accuracy": 0.838106
+          },
+          {
+            "f1": 0.867505,
+            "precision": 0.915675,
+            "recall": 0.82415,
+            "accuracy": 0.874117
+          },
+          {
+            "f1": 0.839841,
+            "precision": 0.899044,
+            "recall": 0.787954,
+            "accuracy": 0.849724
+          },
+          {
+            "f1": 0.852392,
+            "precision": 0.902359,
+            "recall": 0.807668,
+            "accuracy": 0.860147
+          },
+          {
+            "f1": 0.84345,
+            "precision": 0.892975,
+            "recall": 0.799131,
+            "accuracy": 0.851688
+          }
+        ]
+      },
+      "cv_note": "out-of-fold probabilities at threshold 0.5"
+    },
+    "xgboost": {
+      "best_params": {
+        "n_estimators": 54,
+        "max_depth": 9,
+        "learning_rate": 0.19
+      },
+      "search_best_f1": 0.873166,
+      "cv": {
+        "threshold": 0.5,
+        "mean": {
+          "f1": 0.873166,
+          "precision": 0.904968,
+          "recall": 0.843661,
+          "accuracy": 0.877497
+        },
+        "per_fold": [
+          {
+            "f1": 0.861459,
+            "precision": 0.898248,
+            "recall": 0.827565,
+            "accuracy": 0.866899
+          },
+          {
+            "f1": 0.878741,
+            "precision": 0.914987,
+            "recall": 0.845258,
+            "accuracy": 0.883353
+          },
+          {
+            "f1": 0.879741,
+            "precision": 0.89588,
+            "recall": 0.864173,
+            "accuracy": 0.88186
+          },
+          {
+            "f1": 0.866748,
+            "precision": 0.906319,
+            "recall": 0.830487,
+            "accuracy": 0.872332
+          },
+          {
+            "f1": 0.87914,
+            "precision": 0.909408,
+            "recall": 0.850823,
+            "accuracy": 0.883042
+          }
+        ]
+      },
+      "cv_note": "out-of-fold probabilities at threshold 0.5"
+    },
+    "lightgbm": {
+      "best_params": {
+        "n_estimators": 89,
+        "max_depth": 9,
+        "learning_rate": 0.18
+      },
+      "search_best_f1": 0.871619,
+      "cv": {
+        "threshold": 0.5,
+        "mean": {
+          "f1": 0.871619,
+          "precision": 0.903119,
+          "recall": 0.842389,
+          "accuracy": 0.875961
+        },
+        "per_fold": [
+          {
+            "f1": 0.860461,
+            "precision": 0.895718,
+            "recall": 0.827875,
+            "accuracy": 0.865735
+          },
+          {
+            "f1": 0.875314,
+            "precision": 0.916893,
+            "recall": 0.837343,
+            "accuracy": 0.880714
+          },
+          {
+            "f1": 0.879475,
+            "precision": 0.89583,
+            "recall": 0.863707,
+            "accuracy": 0.881627
+          },
+          {
+            "f1": 0.867635,
+            "precision": 0.903665,
+            "recall": 0.834368,
+            "accuracy": 0.87272
+          },
+          {
+            "f1": 0.87521,
+            "precision": 0.903487,
+            "recall": 0.848649,
+            "accuracy": 0.879007
+          }
+        ]
+      },
+      "cv_note": "out-of-fold probabilities at threshold 0.5"
+    }
+  },
+  "meta_model": {
+    "estimator": "LogisticRegression (scikit-learn defaults)",
+    "source": "P27",
+    "inputs": [
+      "oof_probability_random_forest",
+      "oof_probability_xgboost",
+      "oof_probability_lightgbm"
+    ],
+    "inputs_source": "out-of-fold predictions on the same grouped folds (P15)",
+    "coefficients": [
+      0.917866,
+      3.066552,
+      2.731982
+    ],
+    "intercept": -3.098418
+  },
+  "stacking": {
+    "cv": {
+      "threshold": 0.37,
+      "mean": {
+        "f1": 0.876331,
+        "precision": 0.870354,
+        "recall": 0.88256,
+        "accuracy": 0.875479
+      },
+      "per_fold": [
+        {
+          "f1": 0.868603,
+          "precision": 0.871795,
+          "recall": 0.865435,
+          "accuracy": 0.869073
+        },
+        {
+          "f1": 0.884693,
+          "precision": 0.882235,
+          "recall": 0.887164,
+          "accuracy": 0.884362
+        },
+        {
+          "f1": 0.878182,
+          "precision": 0.85765,
+          "recall": 0.899721,
+          "accuracy": 0.875184
+        },
+        {
+          "f1": 0.870685,
+          "precision": 0.870212,
+          "recall": 0.871158,
+          "accuracy": 0.870625
+        },
+        {
+          "f1": 0.87949,
+          "precision": 0.869875,
+          "recall": 0.88932,
+          "accuracy": 0.878153
+        }
+      ]
+    },
+    "cv_note": "out-of-fold meta-model scores at the chosen threshold; the threshold was chosen on these same folds, so these figures are slightly optimistic"
+  },
+  "threshold": {
+    "value": 0.37,
+    "mean_f1": 0.876331,
+    "fold_f1": [
+      0.868603,
+      0.884693,
+      0.878182,
+      0.870685,
+      0.87949
+    ],
+    "rule": "highest mean F1 over the folds of the meta-model's out-of-fold scores; ties go to the value closest to 0.5; a score equal to the threshold is phishing",
+    "rule_source": "P17",
+    "grid": [
+      0.01,
+      0.02,
+      0.03,
+      0.04,
+      0.05,
+      0.06,
+      0.07,
+      0.08,
+      0.09,
+      0.1,
+      0.11,
+      0.12,
+      0.13,
+      0.14,
+      0.15,
+      0.16,
+      0.17,
+      0.18,
+      0.19,
+      0.2,
+      0.21,
+      0.22,
+      0.23,
+      0.24,
+      0.25,
+      0.26,
+      0.27,
+      0.28,
+      0.29,
+      0.3,
+      0.31,
+      0.32,
+      0.33,
+      0.34,
+      0.35,
+      0.36,
+      0.37,
+      0.38,
+      0.39,
+      0.4,
+      0.41,
+      0.42,
+      0.43,
+      0.44,
+      0.45,
+      0.46,
+      0.47,
+      0.48,
+      0.49,
+      0.5,
+      0.51,
+      0.52,
+      0.53,
+      0.54,
+      0.55,
+      0.56,
+      0.57,
+      0.58,
+      0.59,
+      0.6,
+      0.61,
+      0.62,
+      0.63,
+      0.64,
+      0.65,
+      0.66,
+      0.67,
+      0.68,
+      0.69,
+      0.7,
+      0.71,
+      0.72,
+      0.73,
+      0.74,
+      0.75,
+      0.76,
+      0.77,
+      0.78,
+      0.79,
+      0.8,
+      0.81,
+      0.82,
+      0.83,
+      0.84,
+      0.85,
+      0.86,
+      0.87,
+      0.88,
+      0.89,
+      0.9,
+      0.91,
+      0.92,
+      0.93,
+      0.94,
+      0.95,
+      0.96,
+      0.97,
+      0.98,
+      0.99
+    ],
+    "grid_source": "own decision",
+    "test_data_used": false
+  },
+  "not_applied": {
+    "calibration": "not applied; the corpus does not cover it",
+    "resampling": "not applied; the classes are balanced since phase 1"
+  },
+  "parallelism": {
+    "n_jobs": 16,
+    "estimator_threads": 1,
+    "note": "workers run whole fits; results do not depend on n_jobs"
+  },
+  "machine": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "logical_cpus": 16
+  },
+  "versions": {
+    "python": "3.12.10",
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "scikit-learn": "1.9.1",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "joblib": "1.6.0"
+  },
+  "durations": {
+    "search_seconds": 122.131,
+    "oof_seconds": 6.216,
+    "refit_seconds": 3.851,
+    "total_seconds": 160.152
+  }
+}

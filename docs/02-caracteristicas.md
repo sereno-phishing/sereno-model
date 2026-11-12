@@ -1,6 +1,6 @@
 # Fase 2: características
 
-Estado: cerrada el 2026-11-11. Abierta el 2026-11-11.
+Estado: reabierta el 2026-11-12 para medir las características que dependen de una lista. Abierta el 2026-11-11 y cerrada el 2026-11-11.
 
 ## Objetivo
 
@@ -35,7 +35,7 @@ Definir el vector de características de una URL e implementar su extracción en
 |---|---|
 | Características de host: solo desde el texto de la URL, o también con DNS o WHOIS | Decidido el 2026-11-11: solo desde el texto; ver `decisiones.md` |
 | Lista de características del vector, con nombre y definición | Aprobada por Andrés el 2026-11-11; ver «Vector base» |
-| Características que dependen de una lista (palabras sospechosas, acortadores, marcas, TLD sospechoso) | Fuera del vector base; se agregan después como un paso medido aparte |
+| Características que dependen de una lista (palabras sospechosas, acortadores, marcas, TLD sospechoso) | Fuera del vector base. Medidas el 2026-11-12 como grupos candidatos, sin adoptar; ver el registro |
 | Extracción en un paquete único, con pruebas | Hecho el 2026-11-11; ver el registro |
 | Control de sesgo de fuente sobre el vector | Ejecutado el 2026-11-11 sobre las dos versiones del vector; la fuente sigue siendo identificable. Se reporta como diagnóstico y limitación declarada, sin umbrales |
 | Matrices de entrenamiento y de prueba con hash y reporte | Hecho el 2026-11-11; corrida `20261112T025607Z` (versión 2) |
@@ -373,6 +373,69 @@ Los 19 AUC son idénticos a los de la corrida `20261112T025610Z`, columna «AUC,
 | Fuente | 11 | 0.622 | 0.701 | 0.912 | Legítimas con ruta, Dam Minh |
 
 Pruebas: 292 en verde.
+
+### 2026-11-12: medición de las características de lista (exploración)
+
+Andrés aprobó medir tres grupos candidatos, cada uno por separado sobre el vector versión 2 y todos juntos, con validación cruzada agrupada solo sobre la matriz de entrenamiento. La adopción de algún grupo queda pendiente de su decisión. El vector versión 2 y `FEATURE_NAMES` no cambian.
+
+| Grupo | Características | Papers |
+|---|---|---|
+| G1 | `tld_in_subdomain`, `tld_in_path` | P18 (líneas 344-346), P15 (línea 402) |
+| G2 | `sensitive_word_count` | P09, P10, P18, P30, P33 |
+| G3 | `is_shortener` | P09, P10, P25, P33, P39 |
+
+Las listas son constantes fijas y versionadas en `src/sereno_model/features/candidates.py` (versión 1), cada entrada con el pasaje del corpus que la imprime. No se descarga nada ni se toma nada de los datos.
+
+Verificación de las listas en el texto extraído del corpus:
+
+- Palabras (G2): «login» (P10, P30, P33), «log in» y «sign in» (P09), «update» (P09, P33), «validate» y «activate» (P33), «secure» (P18, P30, P33), «verify» (P30), «account» (P09, P10), «submit» (P18), «bank», «bonus» y «service» (P09, solo en plural). «signin» no aparece impreso como tal y no se lista: es la forma que toma «sign in» al quitar los separadores, así que se detecta igual.
+- Acortadores (G3): solo `bit.ly` (P09, P10, P25) y `w.wiki` (P33) aparecen impresos como dominio. `tinyurl.com`, `goo.gl` y `shorturl.at` no aparecen; P33 nombra el servicio «tinyURL» pero no su dominio. Se dejaron fuera. No se agregó ningún dominio visto en los datos ni en los falsos negativos del diagnóstico.
+
+Decisiones propias, porque el corpus no da la regla exacta:
+
+- `tld_in_subdomain`: 1 si una secuencia de etiquetas consecutivas no vacías del subdominio es un sufijo público ICANN de la lista de `tldextract` (`paypal.com.evil.net`). Un código de país cuenta, así que `de.example.org` también da 1. Vale 0 con un host IP o sin dominio registrado.
+- `tld_in_path`: 1 si un segmento de la ruta, en minúsculas, contiene después de un punto una secuencia de etiquetas que es un sufijo ICANN, con alguna etiqueta no vacía antes (`/paypal.com/`). La consulta no cuenta. Las extensiones de archivo que también son sufijos (`.zip`, `.py`, `.do`) dan 1, porque la lista no las distingue.
+- `sensitive_word_count`: número de apariciones de las palabras en el texto medido del extractor (sin esquema ni «www.»), en minúsculas y sin ningún carácter que no sea letra o dígito ASCII. Así «log in», «log-in» y «login» son la misma palabra. Se cuenta por subcadena: «banks» cuenta «bank», y una palabra puede formarse entre dos partes (`blog.info` contiene «login»).
+- `is_shortener`: 1 si el dominio registrado del host, con sufijos ICANN como en `domains.py`, está en la lista.
+
+Corrida de exploración, no citable como resultado final: `python -m sereno_model.models.ablation --n-jobs 16`, desde el commit `6da51eb` con cambios sin commit (`reportable: false`). Matriz de entrenamiento de la corrida `20261112T025607Z` (hash `308d6b88…41eb`), semilla 20261111, `StratifiedGroupKFold` con 5 pliegues por dominio registrado, los mismos para todas las variantes, rangos de P09 y 20 candidatos por búsqueda. La prueba ciega no se leyó. Duración: 503 s. Reporte en `artifacts/diagnostics/20261112T160557Z/report.json`.
+
+| Variante | RF | XGBoost | LightGBM | Stacking | Diferencia con v2 | Precisión | Recall | Exactitud | Umbral |
+|---|---|---|---|---|---|---|---|---|---|
+| v2 | 0.8459 | 0.8732 | 0.8716 | 0.8763 | | 0.8704 | 0.8826 | 0.8755 | 0.37 |
+| v2 + G1 | 0.8470 | 0.8738 | 0.8738 | 0.8759 | -0.0004 | 0.8749 | 0.8772 | 0.8758 | 0.39 |
+| v2 + G2 | 0.8559 | 0.8768 | 0.8774 | 0.8803 | +0.0040 | 0.8906 | 0.8704 | 0.8817 | 0.44 |
+| v2 + G3 | 0.8487 | 0.8730 | 0.8721 | 0.8756 | -0.0008 | 0.8761 | 0.8751 | 0.8757 | 0.40 |
+| v2 + G1 + G2 + G3 | 0.8541 | 0.8788 | 0.8786 | 0.8821 | +0.0057 | 0.8870 | 0.8773 | 0.8827 | 0.42 |
+
+La variante v2 reproduce la corrida 1.0.0 (F1 0.8763, umbral 0.37). Las diferencias son pequeñas frente a la variación entre pliegues: el F1 del Stacking de v2 va de 0.8686 a 0.8847 según el pliegue.
+
+F1 del Stacking por subgrupo:
+
+| Variante | url_phish_2026 | hannousse_2021 | PhishTank | Dominios recortados (FN; tasa de FP) | Resto de dominios |
+|---|---|---|---|---|---|
+| v2 | 0.7924 | 0.7957 | 0.9466 | 0.9879 (113; 0.585) | 0.8513 |
+| v2 + G1 | 0.7970 | 0.7980 | 0.9427 | 0.9855 (135; 0.717) | 0.8512 |
+| v2 + G2 | 0.8090 | 0.8128 | 0.9394 | 0.9837 (164; 0.547) | 0.8567 |
+| v2 + G3 | 0.7974 | 0.7945 | 0.9424 | 0.9855 (141; 0.604) | 0.8507 |
+| v2 + G1 + G2 + G3 | 0.8070 | 0.8186 | 0.9424 | 0.9834 (164; 0.623) | 0.8591 |
+
+La tasa de FP de los dominios recortados se calcula sobre solo 53 legítimas.
+
+Proporción de filas con valor distinto de cero:
+
+| Característica | Phishing | Legítimas | Mayor diferencia entre fuentes dentro de una clase |
+|---|---|---|---|
+| `tld_in_subdomain` | 0.0832 | 0.0197 | 0.069 (phishing) |
+| `tld_in_path` | 0.0132 | 0.0046 | 0.053 (phishing) |
+| `sensitive_word_count` | 0.1042 | 0.0155 | 0.232 (phishing) |
+| `is_shortener` | 0.0155 | 0.0000 | 0.022 (phishing) |
+
+Alerta de identificación de fuente (regla propia: diferencia mayor que 0.2 dentro de una clase entre fuentes con al menos 100 filas): solo `sensitive_word_count`. Entre el phishing, la palabra aparece en el 29.6 % de las filas de hannousse_2021, el 8.9 % de url_phish_2026 y el 6.3 % de PhishTank. `is_shortener` no vale 1 en ninguna legítima, así que con esta lista marca solo phishing.
+
+Lectura, sin elegir grupos: G2 es el único grupo que mejora solo (+0.004), sobre todo en precisión y en las dos fuentes con ambas clases, pero es el que más varía entre fuentes. G1 y G3 solos no mejoran. Los tres juntos suman +0.006. Ninguna variante acerca el F1 a 0.96. En los dominios recortados (plataformas y acortadores) todas las variantes tienen más falsos negativos que v2. G3, con solo dos dominios, no cambia los acortadores que más fallan (`ln.run`, `linkin.bio`, `tinyurl.com`, `urlz.fr`), que no están impresos en el corpus.
+
+Código: `src/sereno_model/features/candidates.py` y `src/sereno_model/models/ablation.py`, con pruebas en `tests/test_features_candidates.py` y `tests/test_models_ablation.py`. Pruebas: 384 en verde.
 
 ## Revisión de Andrés
 
