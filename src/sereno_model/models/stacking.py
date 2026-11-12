@@ -1,10 +1,16 @@
 """The Stacking method approved for phase 3 and the model object saved as the artifact.
 
-Method (``docs/03-modelos.md``, "Propuesta de método", approved on 2026-11-12):
+Method (``docs/03-modelos.md``, "Método aprobado", approved on 2026-11-12 and updated the same
+day with variant C of the TF-IDF ablation):
 
-1. Only the 24 features of the vector reach a model; metadata and audit columns never do.
-2. ``StratifiedGroupKFold`` over the training split, grouped by registered domain. The same
-   folds serve the hyperparameter search, the out-of-fold predictions and the threshold.
+1. The inputs are the 24 features of vector version 2 plus a character TF-IDF of the measured
+   text of the URL (n-grams 1 to 3, ``max_features=5000`` as in P02, transformer parameters of
+   P32). The vectorizer sits in a pipeline with each base model, so it is fitted on the training
+   rows of each fold only; the matrix stays sparse. Metadata and audit columns never reach a
+   model. ``ngram_range=None`` keeps the vector-only model of version 1.0.0.
+2. ``StratifiedKFold`` over the training split, shuffled, as in the papers; the folds grouped
+   by registered domain (``StratifiedGroupKFold``) remain available. The same folds serve the
+   hyperparameter search, the out-of-fold predictions and the threshold.
 3. Random Forest, XGBoost and LightGBM are tuned with ``RandomizedSearchCV`` scored by F1, with
    the ranges of P09. The search budget ``n_iter`` is not in the corpus: it is an own decision.
 4. The meta-features are the out-of-fold phishing probabilities of the tuned base models (P15);
@@ -18,22 +24,36 @@ Every estimator runs single-threaded with a fixed seed, and parallelism only spr
 over workers, so the result does not depend on the number of workers.
 """
 
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from lightgbm import LGBMClassifier
 from sklearn.base import clone
+from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.model_selection import RandomizedSearchCV, StratifiedGroupKFold
+from sklearn.model_selection import RandomizedSearchCV, StratifiedGroupKFold, StratifiedKFold
+from sklearn.pipeline import Pipeline
+from threadpoolctl import threadpool_limits
 from xgboost import XGBClassifier
 
+from sereno_model.data.normalize import parse_url
 from sereno_model.features.build import AUDIT_COLUMNS, METADATA_COLUMNS
-from sereno_model.features.extract import FEATURE_NAMES, FEATURE_SET_VERSION
+from sereno_model.features.extract import (
+    FEATURE_NAMES,
+    FEATURE_SET_VERSION,
+    features_from_parts,
+    measured_text,
+)
 
 DEFAULT_SEED = 20261111
 DEFAULT_N_SPLITS = 5
@@ -68,6 +88,30 @@ SEARCH_SPACES = {
 }
 
 METRICS = ("f1", "precision", "recall", "accuracy")
+
+FOLD_RANDOM, FOLD_GROUPED = "random", "grouped"
+FOLD_STRATEGIES = (FOLD_RANDOM, FOLD_GROUPED)
+DEFAULT_FOLD_STRATEGY = FOLD_RANDOM
+FOLD_METHODS = {
+    FOLD_RANDOM: "StratifiedKFold(n_splits, shuffle=True, random_state=seed); groups ignored, "
+    "as in the papers",
+    FOLD_GROUPED: "StratifiedGroupKFold(n_splits, shuffle=True, random_state=seed), grouped by "
+    "registered domain",
+}
+
+TEXT_COLUMN = "url_text"
+# P02 (AntiPhishStack) caps the character TF-IDF vocabulary at 5000 terms.
+MAX_FEATURES = 5000
+MODEL_STEP = "model"
+# Variant C of the TF-IDF ablation (artifacts/diagnostics/20261112T192824Z); the corpus does not
+# give the n-gram range, so it is an own decision measured there.
+OFFICIAL_NGRAM_RANGE = (1, 3)
+ABLATION_REPORT = "artifacts/diagnostics/20261112T192824Z"
+
+DEFAULT_LATENCY_ROWS = 1000
+DEFAULT_LATENCY_WARMUP = 50
+# Own decision: the latency sample is drawn from the training rows with this offset on the seed.
+LATENCY_SEED_OFFSET = 1
 
 
 def make_threshold_grid(step: float = DEFAULT_THRESHOLD_STEP) -> list[float]:
@@ -122,6 +166,140 @@ def grouped_folds(labels, groups, n_splits: int, seed: int) -> list[tuple[np.nda
         (train, val)
         for train, val in splitter.split(np.zeros(len(labels)), labels, np.asarray(groups))
     ]
+
+
+def make_folds(labels, groups, n_splits: int, seed: int, strategy: str) -> list:
+    """Plain shuffled stratified folds (``random``) or folds grouped by domain (``grouped``)."""
+    if strategy not in FOLD_STRATEGIES:
+        raise ValueError(f"unknown fold strategy {strategy!r}; expected one of {FOLD_STRATEGIES}")
+    labels = np.asarray(labels)
+    if strategy == FOLD_GROUPED:
+        return grouped_folds(labels, groups, n_splits=n_splits, seed=seed)
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    return [(train, val) for train, val in splitter.split(np.zeros(len(labels)), labels)]
+
+
+def url_text(urls) -> list[str]:
+    """The measured text of every URL: the same normalization path as vector version 2."""
+    return [measured_text(parse_url(url)) for url in urls]
+
+
+def tfidf_vectorizer(ngram_range: tuple[int, int]) -> TfidfVectorizer:
+    """Character TF-IDF of P02 (``max_features=5000``).
+
+    ``norm``, ``use_idf``, ``smooth_idf`` and ``sublinear_tf`` are written out with the values
+    reported by P32 (l2, True, True, False), which are also the scikit-learn defaults.
+    """
+    return TfidfVectorizer(
+        analyzer="char",
+        ngram_range=tuple(ngram_range),
+        max_features=MAX_FEATURES,
+        lowercase=True,
+        norm="l2",
+        use_idf=True,
+        smooth_idf=True,
+        sublinear_tf=False,
+    )
+
+
+def tfidf_settings(ngram_range: tuple[int, int]) -> dict:
+    """The TF-IDF parameters as the reports record them."""
+    return {
+        "analyzer": "char",
+        "ngram_range": list(ngram_range),
+        "max_features": MAX_FEATURES,
+        "lowercase": True,
+        "norm": "l2",
+        "use_idf": True,
+        "smooth_idf": True,
+        "sublinear_tf": False,
+        "max_features_source": "P02",
+        "transformer_params_source": "P32 (also the scikit-learn defaults)",
+        "selection_source": f"variant C of {ABLATION_REPORT}",
+        "text": "measured text of vector v2: normalized URL without scheme and separator, "
+        "leading 'www.' labels, default port and trailing slashes",
+        "fitted_on": "training rows of each fold only (pipeline inside the search and the "
+        "out-of-fold predictions); the final vectorizer on the whole training split",
+    }
+
+
+def feature_union(ngram_range: tuple[int, int], with_vector: bool) -> ColumnTransformer:
+    """TF-IDF of the text column, optionally followed by the vector columns, as one sparse matrix.
+
+    The vector features are non-negative, so XGBoost treating the zeros left out of the sparse
+    matrix as missing only moves them to one end of each split, where zero already sits.
+    """
+    transformers = [("tfidf", tfidf_vectorizer(ngram_range), TEXT_COLUMN)]
+    if with_vector:
+        transformers.append(("v2", "passthrough", list(FEATURE_NAMES)))
+    return ColumnTransformer(transformers, sparse_threshold=1.0)
+
+
+def tfidf_estimator(name: str, seed: int, ngram_range, with_vector: bool) -> Pipeline:
+    """A base model behind the TF-IDF features, so both are fitted on the same training rows."""
+    return Pipeline(
+        [
+            ("features", feature_union(ngram_range, with_vector)),
+            (MODEL_STEP, base_estimator(name, seed)),
+        ]
+    )
+
+
+def prefixed_spaces(spaces: dict) -> dict:
+    """The P09 ranges with the pipeline step prefix that ``RandomizedSearchCV`` needs."""
+    return {
+        name: {f"{MODEL_STEP}__{key}": values for key, values in space.items()}
+        for name, space in spaces.items()
+    }
+
+
+def unprefixed(params: dict) -> dict:
+    prefix = f"{MODEL_STEP}__"
+    return {key.removeprefix(prefix): value for key, value in params.items()}
+
+
+def model_inputs(frame: pd.DataFrame, with_vector: bool) -> pd.DataFrame:
+    """The text column, plus the vector columns when ``with_vector``."""
+    inputs = pd.DataFrame({TEXT_COLUMN: url_text(frame["url"])}, index=frame.index)
+    if with_vector:
+        inputs = pd.concat([inputs, frame[feature_columns(frame)]], axis=1)
+    return inputs
+
+
+def measure_latency(model, urls, warmup: int) -> dict:
+    """Milliseconds per URL of ``model.score_url``, one URL at a time on one thread."""
+    urls = list(urls)
+    timings = []
+    with threadpool_limits(limits=1):
+        for url in urls[: max(warmup, 0)]:
+            model.score_url(url)
+        for url in urls:
+            clock = time.perf_counter()
+            model.score_url(url)
+            timings.append((time.perf_counter() - clock) * 1000)
+    values = np.array(timings)
+    return {
+        "rows": len(values),
+        "warmup": warmup,
+        "threads": 1,
+        "p50": round(float(np.percentile(values, 50)), 3),
+        "p95": round(float(np.percentile(values, 95)), 3),
+        "mean": round(float(values.mean()), 3),
+        "max": round(float(values.max()), 3),
+        "scope": "vector extraction, measured text, TF-IDF and vector union, three base "
+        "models and meta-model; no network, cache or server",
+    }
+
+
+def serialized_size(model) -> int:
+    """Bytes of ``joblib.dump(model)``, written to a temporary directory and deleted."""
+    directory = tempfile.mkdtemp(prefix="sereno-tfidf-size-")
+    try:
+        path = Path(directory) / "model.joblib"
+        joblib.dump(model, path)
+        return path.stat().st_size
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def _rows(X, index: np.ndarray):
@@ -191,11 +369,14 @@ def select_threshold(y, scores, folds, grid) -> dict:
 
 
 class StackingModel:
-    """The saved artifact: three base models, the meta-model and the decision threshold.
+    """The saved artifact: feature union, three base models, meta-model and decision threshold.
 
     ``score`` returns the meta-model's phishing probability in [0, 1]; ``predict`` turns it into
-    1 (phishing) or 0 (legitimate) with ``threshold``. The input must hold the feature columns by
-    name, in any order; other columns are ignored.
+    1 (phishing) or 0 (legitimate) with ``threshold``. The input is a URL, a sequence of URLs,
+    or a frame with a ``url`` column; the frame may also hold every vector column by name, in
+    any order, and then those values are used instead of being computed from the URL. Other
+    columns are ignored. ``features`` is the fitted TF-IDF and vector union, or ``None`` for a
+    vector-only model.
     """
 
     def __init__(
@@ -207,6 +388,8 @@ class StackingModel:
         feature_set_version: str,
         model_version: str | None = None,
         created_at: str | None = None,
+        features=None,
+        ngram_range: tuple[int, int] | None = None,
     ):
         self.base_models = base_models
         self.meta_model = meta_model
@@ -215,22 +398,48 @@ class StackingModel:
         self.feature_set_version = feature_set_version
         self.model_version = model_version
         self.created_at = created_at
+        self.features = features
+        self.ngram_range = tuple(ngram_range) if ngram_range else None
 
-    def _features(self, X: pd.DataFrame) -> pd.DataFrame:
-        missing = [name for name in self.feature_names if name not in X.columns]
-        if missing:
+    def _inputs(self, X) -> pd.DataFrame:
+        """The columns the union or the base models were fitted on, in their order."""
+        if isinstance(X, str):
+            X = [X]
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame({"url": list(X)})
+        present = [name for name in self.feature_names if name in X.columns]
+        if len(present) == len(self.feature_names):
+            inputs = X[self.feature_names].reset_index(drop=True)
+        elif not present and "url" in X.columns:
+            vectors = [features_from_parts(parse_url(url)) for url in X["url"]]
+            inputs = pd.DataFrame(vectors, columns=list(FEATURE_NAMES))[self.feature_names]
+        else:
+            missing = [name for name in self.feature_names if name not in X.columns]
             raise ValueError(f"the input lacks the features {missing}")
-        return X[self.feature_names]
+        if getattr(self, "features", None) is not None:
+            if "url" not in X.columns:
+                raise ValueError("the input lacks the url column that the TF-IDF needs")
+            inputs.insert(0, TEXT_COLUMN, url_text(X["url"]))
+        return inputs
 
-    def base_scores(self, X: pd.DataFrame) -> np.ndarray:
+    def _matrix(self, X):
+        inputs = self._inputs(X)
+        features = getattr(self, "features", None)
+        return inputs if features is None else features.transform(inputs)
+
+    def base_scores(self, X) -> np.ndarray:
         """One column per base model, in the order of ``base_models``: the meta-features."""
-        features = self._features(X)
+        matrix = self._matrix(X)
         return np.column_stack(
-            [model.predict_proba(features)[:, 1] for model in self.base_models.values()]
+            [model.predict_proba(matrix)[:, 1] for model in self.base_models.values()]
         )
 
-    def score(self, X: pd.DataFrame) -> np.ndarray:
+    def score(self, X) -> np.ndarray:
         return self.meta_model.predict_proba(self.base_scores(X))[:, 1]
+
+    def score_url(self, url: str) -> float:
+        """Phishing probability of one URL."""
+        return float(self.score([url])[0])
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         score = self.score(X)
@@ -251,6 +460,8 @@ class FitResult:
     threshold: dict
     cv_metrics: dict
     durations: dict = field(default_factory=dict)
+    fold_strategy: str = DEFAULT_FOLD_STRATEGY
+    ngram_range: tuple[int, int] | None = OFFICIAL_NGRAM_RANGE
 
 
 def _plain(value):
@@ -365,18 +576,44 @@ def fit_stacking(
     threshold_grid: list[float] | None = None,
     model_version: str | None = None,
     created_at: str | None = None,
+    fold_strategy: str = DEFAULT_FOLD_STRATEGY,
+    ngram_range: tuple[int, int] | None = OFFICIAL_NGRAM_RANGE,
 ) -> FitResult:
-    """Tune, stack and refit on ``frame``, the training split only."""
+    """Tune, stack and refit on ``frame``, the training split only.
+
+    With ``ngram_range`` the inputs are vector v2 plus the character TF-IDF; the refit fits one
+    union on every training row and the tuned base models on its matrix. The vectorizer is
+    deterministic, so that union equals the one each pipeline would fit on the same rows.
+    """
     columns = feature_columns(frame)
-    X = frame[columns]
     y = frame["label"].to_numpy().astype(int)
-    folds = grouped_folds(y, frame["group"], n_splits=n_splits, seed=seed)
-    cv = cross_validate(
-        X, y, folds, n_iter=n_iter, seed=seed, n_jobs=n_jobs, threshold_grid=threshold_grid
-    )
+    folds = make_folds(y, frame["group"], n_splits=n_splits, seed=seed, strategy=fold_strategy)
+    common = {"n_iter": n_iter, "seed": seed, "n_jobs": n_jobs, "threshold_grid": threshold_grid}
+    if ngram_range is None:
+        X = frame[columns]
+        cv = cross_validate(X, y, folds, **common)
+    else:
+        ngram_range = tuple(ngram_range)
+        X = model_inputs(frame, with_vector=True)
+        cv = cross_validate(
+            X, y, folds, search_spaces=prefixed_spaces(SEARCH_SPACES), **common,
+            estimator_factory=lambda name, model_seed: tfidf_estimator(
+                name, model_seed, ngram_range, True
+            ),
+        )
+    best_params = {name: unprefixed(params) for name, params in cv.best_params.items()}
 
     started = time.perf_counter()
-    base_models = {name: estimator.fit(X, y) for name, estimator in cv.tuned.items()}
+    if ngram_range is None:
+        features = None
+        base_models = {name: estimator.fit(X, y) for name, estimator in cv.tuned.items()}
+    else:
+        features = feature_union(ngram_range, with_vector=True)
+        matrix = features.fit_transform(X)
+        base_models = {
+            name: base_estimator(name, seed).set_params(**best_params[name]).fit(matrix, y)
+            for name in BASE_MODEL_NAMES
+        }
     meta_model = meta_estimator(seed).fit(cv.meta_features, y)
     refit_seconds = time.perf_counter() - started
 
@@ -388,15 +625,19 @@ def fit_stacking(
         FEATURE_SET_VERSION,
         model_version=model_version,
         created_at=created_at,
+        features=features,
+        ngram_range=ngram_range,
     )
     return FitResult(
         model=model,
         folds=folds,
-        best_params=cv.best_params,
+        best_params=best_params,
         search_best_f1=cv.search_best_f1,
         oof_base=cv.oof_base,
         oof_meta=cv.oof_meta,
         threshold=cv.threshold,
         cv_metrics=cv.cv_metrics,
         durations={**cv.durations, "refit_seconds": round(refit_seconds, 3)},
+        fold_strategy=fold_strategy,
+        ngram_range=ngram_range,
     )

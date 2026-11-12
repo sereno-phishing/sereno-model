@@ -5,6 +5,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import inspect
+
 import pytest
 from test_models_stacking import synthetic_matrix
 
@@ -21,10 +23,13 @@ from sereno_model.models.train import (
 
 FEATURES_RUN = "20261112T025607Z"
 NOW = datetime(2026, 11, 15, 9, 0, 0, tzinfo=UTC)
-FAST = {"n_iter": 2, "n_splits": 3, "n_jobs": 1, "threshold_grid": [0.3, 0.5, 0.7]}
+FAST = {"n_iter": 2, "n_splits": 3, "n_jobs": 1, "threshold_grid": [0.3, 0.5, 0.7],
+        "latency_rows": 10, "latency_warmup": 2}
 
 
-def make_features_run(root: Path, frame: pd.DataFrame | None = None) -> Path:
+def make_features_run(
+    root: Path, frame: pd.DataFrame | None = None, split_strategy: str | None = "random"
+) -> Path:
     """Write a train matrix and its features report; the test file is deliberately unreadable."""
     frame = synthetic_matrix() if frame is None else frame
     data_dir = root / "data"
@@ -32,9 +37,12 @@ def make_features_run(root: Path, frame: pd.DataFrame | None = None) -> Path:
     run_dir.mkdir(parents=True)
     write_parquet(frame, MATRIX_SCHEMA, run_dir / "features_train.parquet")
     (run_dir / "features_test.parquet").write_bytes(b"blind test: must never be opened in T1")
+    split_run = {"dir": "processed/20261111T222736Z", "partition_hash": "p" * 64,
+                 "seed": 20261111}
+    if split_strategy is not None:
+        split_run["strategy"] = split_strategy
     report = {
-        "split_run": {"dir": "processed/20261111T222736Z", "partition_hash": "p" * 64,
-                      "seed": 20261111},
+        "split_run": split_run,
         "assemble_run": {"dir": "processed/20261111T222725Z", "content_hash": "a" * 64},
         "feature_set": {"version": FEATURE_SET_VERSION, "names": list(FEATURE_NAMES)},
         "splits": {
@@ -179,3 +187,60 @@ def test_cli_trains_and_prints_a_summary(tmp_path, capsys):
     report = json.loads((tmp_path / "artifacts" / "cli" / "report.json").read_text("utf-8"))
     assert report["command"].startswith("python -m sereno_model.models.train")
     assert report["threshold"]["grid"] == [0.25, 0.5, 0.75]
+
+
+def test_report_records_the_tfidf_feature_set_folds_latency_and_size(tmp_path):
+    report = run(tmp_path)
+    feature_set = report["feature_set"]
+    assert feature_set["version"] == FEATURE_SET_VERSION
+    assert feature_set["names"] == list(FEATURE_NAMES)
+    assert feature_set["tfidf"] == {
+        "analyzer": "char",
+        "ngram_range": [1, 3],
+        "max_features": 5000,
+        "lowercase": True,
+        "norm": "l2",
+        "use_idf": True,
+        "smooth_idf": True,
+        "sublinear_tf": False,
+        "max_features_source": "P02",
+        "transformer_params_source": "P32 (also the scikit-learn defaults)",
+        "selection_source": "variant C of artifacts/diagnostics/20261112T192824Z",
+        "text": feature_set["tfidf"]["text"],
+        "fitted_on": feature_set["tfidf"]["fitted_on"],
+    }
+    assert report["cv"]["strategy"] == "random"
+    assert report["cv"]["strategy_source"] == "split run"
+    assert report["cv"]["method"].startswith("StratifiedKFold")
+    latency = report["latency_ms"]
+    assert latency["rows"] == 10 and latency["p50"] > 0 and latency["p95"] >= latency["p50"]
+    model_file = tmp_path / "artifacts" / "0.1.0" / "model.joblib"
+    assert report["model_size_bytes"] == model_file.stat().st_size
+
+
+def test_cv_folds_follow_the_split_strategy_unless_one_is_given(tmp_path):
+    grouped_dir = make_features_run(tmp_path / "g", split_strategy="grouped")
+    legacy_dir = make_features_run(tmp_path / "l", split_strategy=None)
+    grouped = run(tmp_path / "g", data_dir=grouped_dir)
+    legacy = run(tmp_path / "l", data_dir=legacy_dir)
+    forced = run(tmp_path / "l", data_dir=legacy_dir, version="forced", cv_strategy="random")
+    assert (grouped["cv"]["strategy"], grouped["cv"]["method"][:20]) == (
+        "grouped", "StratifiedGroupKFold"
+    )
+    assert legacy["cv"]["strategy"] == "grouped"
+    assert (forced["cv"]["strategy"], forced["cv"]["strategy_source"]) == ("random", "argument")
+
+
+def test_saved_model_scores_raw_urls(tmp_path):
+    run(tmp_path)
+    model = joblib.load(tmp_path / "artifacts" / "0.1.0" / "model.joblib")
+    urls = ["https://login.example-bank.com/verify?id=7", "https://www.wikipedia.org/"]
+    scores = model.score(urls)
+    assert scores.shape == (2,)
+    assert np.all((scores >= 0) & (scores <= 1))
+    assert set(model.predict(urls)) <= {0, 1}
+    assert model.score_url(urls[0]) == pytest.approx(scores[0])
+
+
+def test_default_search_budget_is_twenty_candidates():
+    assert inspect.signature(train).parameters["n_iter"].default == 20

@@ -23,30 +23,32 @@ El ADD no fija cómo se producen las entradas del meta-modelo, la validación cr
 
 ## Decisiones heredadas
 
-- Partición 80/20 agrupada por dominio registrado y estratificada, con semilla 20261111 (Fase 1).
+- Partición 80/20 aleatoria y estratificada, con semilla 20261111, como en los papers; la agrupada por dominio registrado queda como análisis de robustez (Fase 1, registro del 2026-11-12).
 - Sin remuestreo adicional: las clases ya están balanceadas (Fase 1).
 - Entrenamiento oficial en CPU (`decisiones.md`).
-- Vector versión 2, 24 características; las columnas `audit_*` no entran al modelo (Fase 2).
+- Vector versión 2, 24 características; las columnas `audit_*` no entran al modelo (Fase 2). El modelo oficial les suma un TF-IDF de caracteres de la URL (ver «Método aprobado»).
 - Quedan para esta fase: evaluación entre fuentes como P20, métricas aparte para plataformas compartidas y acortadores, e importancia y estabilidad de las características.
 
 ## Entradas
 
 - `data/processed/20261112T025607Z/features_train.parquet`: 64,423 filas (32,212 phishing y 32,211 legítimas).
 - `data/processed/20261112T025607Z/features_test.parquet`: 16,107 filas (8,053 y 8,054). Solo se usa en la evaluación final.
-- Columna `group` (dominio registrado) para agrupar la validación cruzada.
+- Columna `group` (dominio registrado), para los pliegues agrupados del análisis de robustez y para el análisis de errores.
+- Las matrices de arriba son de la partición agrupada anterior; con la partición aleatoria hay que regenerar la Fase 2 (ver el registro del 2026-11-12).
 
 ## Método aprobado
 
-Aprobado por Andrés el 2026-11-12.
+Aprobado por Andrés el 2026-11-12 y actualizado el mismo día con la variante C del TF-IDF.
 
 | Decisión | Propuesta | Sustento |
 |---|---|---|
+| Entradas de los modelos base | Las 24 características v2 más un TF-IDF de caracteres del texto medido de la URL: n-gramas de 1 a 3, `max_features=5000`, norma l2, IDF suavizado, sin `sublinear_tf`. El vectorizador se ajusta dentro de cada pliegue (Pipeline) y la matriz es dispersa | `max_features`: P02. Parámetros del transformador: P32. Rango de n-gramas: decisión propia medida en la ablación `artifacts/diagnostics/20261112T192824Z` |
 | Entradas del meta-modelo | Probabilidades de cada modelo base predichas por pliegue (fuera de pliegue) sobre el entrenamiento | P15 (super learner por pliegues); P27 (regresión logística como meta-modelo) |
-| Validación cruzada | 5 pliegues, estratificados y agrupados por dominio, con la misma semilla | 5 pliegues: P09, P07. Agrupación por dominio: decisión propia heredada de la Fase 1; el corpus no la trata |
+| Validación cruzada | 5 pliegues estratificados y aleatorios (`StratifiedKFold`, semilla 20261111), según la estrategia de la partición; los agrupados por dominio quedan como análisis de robustez (`--cv-strategy grouped`) | 5 pliegues: P09, P07. Pliegues aleatorios: P02 y los demás papers del corpus |
 | Ajuste de hiperparámetros | Búsqueda aleatoria con los rangos de P09, evaluada con F1 en la validación cruzada | P09 (RandomizedSearch y rangos); P07, P17, P20 y P24 usan búsqueda en rejilla |
 | Umbral | Elegido en la validación cruzada, el de mayor F1 promedio; nunca con la prueba | P17 |
 | Calibración | No se aplica | El corpus no la trata |
-| Formato del artefacto | `joblib`, un archivo por versión, con su `report.json` | Decisión menor de implementación |
+| Formato del artefacto | `joblib`, un archivo por versión, con su `report.json`. El modelo recibe la URL cruda y calcula el texto medido y el vector v2 | Decisión menor de implementación |
 
 ## Criterio de salida
 
@@ -165,3 +167,18 @@ Informe `artifacts/diagnostics/20261112T192824Z/` (no citable: árbol con cambio
 Variante C: latencia de inferencia p50 6.0 ms y p95 6.9 ms por URL (RNF-01: ≤ 200 ms); modelo de 2.3 MB.
 
 Lectura: C es la mejor (0.9519) y queda a 0.008 de la meta de 0.96. El TF-IDF aporta casi toda la mejora; las 24 características v2 suman poco encima. Con pliegues agrupados la mejora se mantiene (+0.046), así que no depende de que un mismo dominio aparezca en entrenamiento y validación. El Stacking supera a cada modelo base en todas las variantes. RF no aprovecha el TF-IDF.
+
+### 2026-11-12: método oficial con TF-IDF y partición aleatoria
+
+Decisión de Andrés sobre la ablación `artifacts/diagnostics/20261112T192824Z`:
+
+- La partición pasa a ser aleatoria y estratificada, como en los papers (P02 y otros usan particiones aleatorias). La agrupada por dominio se conserva como análisis de robustez. Ver `01-datos.md`, registro del 2026-11-12.
+- El modelo oficial es la variante C: 24 características v2 más TF-IDF de caracteres con n-gramas de 1 a 3. En la ablación obtuvo F1 0.9519 con pliegues aleatorios y 0.9381 con pliegues agrupados por dominio (variante E).
+
+Cambios en el código:
+
+- `stacking.py` reúne los bloques del TF-IDF que antes estaban en `tfidf_ablation.py` (texto medido, vectorizador, unión con el vector, pipeline por modelo base, medición de latencia y tamaño) y la ablación los importa de ahí. `fit_stacking` entrena por defecto la variante C con pliegues aleatorios; `ngram_range=None` y `fold_strategy="grouped"` reproducen el método de 1.0.0.
+- `StackingModel` acepta una URL, una lista de URL o una tabla con la columna `url`, y calcula el texto medido y el vector v2. `score`, `predict_proba` y `predict` se mantienen; `score_url` puntúa una URL. Si la tabla trae las 24 columnas del vector, las usa.
+- `train.py` toma la estrategia de pliegues de la partición registrada en `features_report.json` (las particiones anteriores, sin ese dato, eran agrupadas), salvo que `--cv-strategy` indique otra. El `report.json` guarda el conjunto de características con los parámetros del TF-IDF, la estrategia y el método de los pliegues, la latencia p50 y p95 por URL, el tamaño de `model.joblib`, las versiones, el commit y la semilla. Búsqueda por defecto: 20 candidatos por modelo base.
+
+La corrida oficial no se hizo en esta tarea: corre en el equipo de Andrés y tarda horas.

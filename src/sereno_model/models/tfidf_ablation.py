@@ -34,20 +34,13 @@ import argparse
 import json
 import os
 import platform
-import shutil
 import sys
-import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
-from threadpoolctl import threadpool_limits
 
 from sereno_model.data.normalize import parse_url
 from sereno_model.data.split import TRAIN
@@ -59,19 +52,34 @@ from sereno_model.models.diagnose import (
     error_analysis,
     make_folds,
 )
-from sereno_model.models.stacking import (
+from sereno_model.models.stacking import (  # noqa: F401 (re-exported building blocks)
     BASE_MODEL_NAMES,
+    DEFAULT_LATENCY_ROWS,
+    DEFAULT_LATENCY_WARMUP,
     DEFAULT_N_ITER,
     DEFAULT_N_SPLITS,
     DEFAULT_SEED,
     DEFAULT_THRESHOLD_STEP,
+    LATENCY_SEED_OFFSET,
+    MAX_FEATURES,
+    MODEL_STEP,
     SEARCH_SPACES,
+    TEXT_COLUMN,
     base_estimator,
     cross_validate,
     feature_columns,
+    feature_union,
     make_threshold_grid,
+    measure_latency,
     meta_estimator,
+    model_inputs,
+    prefixed_spaces,
+    serialized_size,
+    tfidf_estimator,
+    tfidf_vectorizer,
+    url_text,
 )
+from sereno_model.models.stacking import unprefixed as _unprefixed
 from sereno_model.models.train import _versions, latest_features_run, load_training_matrix
 
 REPORT_NAME = "report.json"
@@ -82,10 +90,6 @@ RUN_TYPE = (
     "exploration: paper-style evaluation (plain stratified folds, character TF-IDF of the URL "
     "as in P02) on the training split only; not citable as a final result"
 )
-TEXT_COLUMN = "url_text"
-# P02 (AntiPhishStack) caps the character TF-IDF vocabulary at 5000 terms.
-MAX_FEATURES = 5000
-MODEL_STEP = "model"
 BASELINE = "A"
 GROUPED_FOLDS = "StratifiedGroupKFold by registered domain (as in 1.0.0)"
 PLAIN_FOLDS = "StratifiedKFold, shuffled, groups ignored (paper-style)"
@@ -97,76 +101,6 @@ VARIANTS = {
     "D": {"with_vector": True, "ngram_range": (3, 5), "grouped": False},
     "E": {"with_vector": True, "ngram_range": "best of C and D", "grouped": True},
 }
-DEFAULT_LATENCY_ROWS = 1000
-DEFAULT_LATENCY_WARMUP = 50
-# Own decision: the latency sample is drawn from the training rows with this offset on the seed.
-LATENCY_SEED_OFFSET = 1
-
-
-def url_text(urls) -> list[str]:
-    """The measured text of every URL: the same normalization path as vector version 2."""
-    return [measured_text(parse_url(url)) for url in urls]
-
-
-def tfidf_vectorizer(ngram_range: tuple[int, int]) -> TfidfVectorizer:
-    """Character TF-IDF of P02 (``max_features=5000``).
-
-    ``norm``, ``use_idf``, ``smooth_idf`` and ``sublinear_tf`` are written out with the values
-    reported by P32 (l2, True, True, False), which are also the scikit-learn defaults.
-    """
-    return TfidfVectorizer(
-        analyzer="char",
-        ngram_range=tuple(ngram_range),
-        max_features=MAX_FEATURES,
-        lowercase=True,
-        norm="l2",
-        use_idf=True,
-        smooth_idf=True,
-        sublinear_tf=False,
-    )
-
-
-def feature_union(ngram_range: tuple[int, int], with_vector: bool) -> ColumnTransformer:
-    """TF-IDF of the text column, optionally followed by the vector columns, as one sparse matrix.
-
-    The vector features are non-negative, so XGBoost treating the zeros left out of the sparse
-    matrix as missing only moves them to one end of each split, where zero already sits.
-    """
-    transformers = [("tfidf", tfidf_vectorizer(ngram_range), TEXT_COLUMN)]
-    if with_vector:
-        transformers.append(("v2", "passthrough", list(FEATURE_NAMES)))
-    return ColumnTransformer(transformers, sparse_threshold=1.0)
-
-
-def tfidf_estimator(name: str, seed: int, ngram_range, with_vector: bool) -> Pipeline:
-    """A base model behind the TF-IDF features, so both are fitted on the same training rows."""
-    return Pipeline(
-        [
-            ("features", feature_union(ngram_range, with_vector)),
-            (MODEL_STEP, base_estimator(name, seed)),
-        ]
-    )
-
-
-def prefixed_spaces(spaces: dict) -> dict:
-    """The P09 ranges with the pipeline step prefix that ``RandomizedSearchCV`` needs."""
-    return {
-        name: {f"{MODEL_STEP}__{key}": values for key, values in space.items()}
-        for name, space in spaces.items()
-    }
-
-
-def _unprefixed(params: dict) -> dict:
-    prefix = f"{MODEL_STEP}__"
-    return {key.removeprefix(prefix): value for key, value in params.items()}
-
-
-def model_inputs(frame: pd.DataFrame, with_vector: bool) -> pd.DataFrame:
-    """The text column, plus the vector columns when ``with_vector``."""
-    inputs = pd.DataFrame({TEXT_COLUMN: url_text(frame["url"])}, index=frame.index)
-    if with_vector:
-        inputs = pd.concat([inputs, frame[feature_columns(frame)]], axis=1)
-    return inputs
 
 
 def _variant_entry(cv, spec: dict, folds_label: str, n_iter: int, frame, capped) -> dict:
@@ -250,42 +184,6 @@ def refit_best(frame: pd.DataFrame, cv, spec: dict, seed: int) -> tuple[TfidfSta
     meta_model = meta_estimator(seed).fit(cv.meta_features, y)
     model = TfidfStacking(features, base_models, meta_model, cv.threshold["threshold"])
     return model, round(time.perf_counter() - started, 3)
-
-
-def measure_latency(model: TfidfStacking, urls, warmup: int) -> dict:
-    """Milliseconds per URL, one URL at a time on one thread, after ``warmup`` calls."""
-    urls = list(urls)
-    timings = []
-    with threadpool_limits(limits=1):
-        for url in urls[: max(warmup, 0)]:
-            model.score_url(url)
-        for url in urls:
-            clock = time.perf_counter()
-            model.score_url(url)
-            timings.append((time.perf_counter() - clock) * 1000)
-    values = np.array(timings)
-    return {
-        "rows": len(values),
-        "warmup": warmup,
-        "threads": 1,
-        "p50": round(float(np.percentile(values, 50)), 3),
-        "p95": round(float(np.percentile(values, 95)), 3),
-        "mean": round(float(values.mean()), 3),
-        "max": round(float(values.max()), 3),
-        "scope": "vector extraction, measured text, TF-IDF and vector union, three base "
-        "models and meta-model; no network, cache or server",
-    }
-
-
-def serialized_size(model) -> int:
-    """Bytes of ``joblib.dump(model)``, written to a temporary directory and deleted."""
-    directory = tempfile.mkdtemp(prefix="sereno-tfidf-size-")
-    try:
-        path = Path(directory) / "model.joblib"
-        joblib.dump(model, path)
-        return path.stat().st_size
-    finally:
-        shutil.rmtree(directory, ignore_errors=True)
 
 
 def tfidf_ablation(

@@ -5,6 +5,11 @@ recorded in its ``features_report.json``. The blind test matrix is left untouche
 the final evaluation. The model and ``report.json`` go to a new ``artifacts/<version>/`` folder;
 an existing version is never overwritten.
 
+The official model is variant C of the TF-IDF ablation: vector version 2 plus a character TF-IDF
+of the URL (n-grams 1 to 3). The cross-validation folds follow the strategy of the split run
+(random ``StratifiedKFold`` or ``StratifiedGroupKFold`` by registered domain) unless
+``--cv-strategy`` names one. The saved model scores raw URLs.
+
 An official run needs a clean Git working tree. ``--allow-dirty`` runs anyway and marks the
 report as an exploration that cannot be cited.
 """
@@ -34,13 +39,22 @@ from sereno_model.features.extract import FEATURE_NAMES, FEATURE_SET_VERSION
 from sereno_model.models.stacking import (
     BASE_MODEL_NAMES,
     BASE_THRESHOLD,
+    DEFAULT_LATENCY_ROWS,
+    DEFAULT_LATENCY_WARMUP,
     DEFAULT_N_ITER,
     DEFAULT_N_SPLITS,
     DEFAULT_SEED,
     DEFAULT_THRESHOLD_STEP,
+    FOLD_GROUPED,
+    FOLD_METHODS,
+    FOLD_STRATEGIES,
+    LATENCY_SEED_OFFSET,
+    OFFICIAL_NGRAM_RANGE,
     SEARCH_SPACES,
     fit_stacking,
     make_threshold_grid,
+    measure_latency,
+    tfidf_settings,
 )
 
 MODEL_NAME = "model.joblib"
@@ -104,6 +118,16 @@ def _versions() -> dict:
     }
 
 
+def fold_strategy(recorded: dict, requested: str | None) -> tuple[str, str]:
+    """The CV fold strategy and where it came from: the argument, else the split run."""
+    if requested is not None:
+        if requested not in FOLD_STRATEGIES:
+            raise ValueError(f"unknown fold strategy {requested!r}")
+        return requested, "argument"
+    # Split runs older than the strategy option were all grouped by registered domain.
+    return recorded["split_run"].get("strategy", FOLD_GROUPED), "split run"
+
+
 def _round(metrics: dict) -> dict:
     return {
         "threshold": metrics["threshold"],
@@ -128,6 +152,9 @@ def train(
     now: datetime | None = None,
     repo_dir: Path | None = None,
     command: str | None = None,
+    cv_strategy: str | None = None,
+    latency_rows: int = DEFAULT_LATENCY_ROWS,
+    latency_warmup: int = DEFAULT_LATENCY_WARMUP,
 ) -> dict:
     """Train on the training matrix and write ``model.joblib`` and ``report.json``.
 
@@ -152,6 +179,7 @@ def train(
     grid = make_threshold_grid() if threshold_grid is None else list(threshold_grid)
     run = features_run or latest_features_run(data_dir)
     frame, recorded = load_training_matrix(data_dir, run)
+    strategy, strategy_source = fold_strategy(recorded, cv_strategy)
     created_at = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
     result = fit_stacking(
         frame,
@@ -162,7 +190,15 @@ def train(
         threshold_grid=grid,
         model_version=version,
         created_at=created_at,
+        fold_strategy=strategy,
+        ngram_range=OFFICIAL_NGRAM_RANGE,
     )
+    sample = np.random.default_rng(seed + LATENCY_SEED_OFFSET).permutation(len(frame))
+    latency_urls = frame["url"].to_numpy()[sample[: min(latency_rows, len(frame))]]
+    clock = time.perf_counter()
+    latency = measure_latency(result.model, latency_urls, latency_warmup)
+    latency_seconds = round(time.perf_counter() - clock, 3)
+    vocabulary = result.model.features.named_transformers_["tfidf"].vocabulary_
     groups = frame["group"].to_numpy()
     labels = frame["label"].to_numpy()
 
@@ -177,8 +213,11 @@ def train(
             "version": version,
             "file": MODEL_NAME,
             "class": "sereno_model.models.stacking.StackingModel",
+            "input": "a URL, a list of URLs or a frame with a url column; the measured text "
+            "and vector v2 are computed from the URL",
             "output": "score(X) is the meta-model phishing probability in [0, 1]; predict(X) "
-            "is 1 (phishing) when the score reaches the threshold, else 0 (legitimate)",
+            "is 1 (phishing) when the score reaches the threshold, else 0 (legitimate); "
+            "score_url(url) scores one URL",
             "loading": "joblib.load; needs sereno_model and the library versions below",
         },
         "input": {
@@ -192,15 +231,25 @@ def train(
             "partition_hash": recorded["split_run"]["partition_hash"],
             "split_run": recorded["split_run"]["dir"],
             "split_seed": recorded["split_run"]["seed"],
+            "split_strategy": recorded["split_run"].get("strategy", FOLD_GROUPED),
             "assemble_run": recorded["assemble_run"],
             "test_split": "not read",
         },
-        "feature_set": {"version": FEATURE_SET_VERSION, "names": list(FEATURE_NAMES)},
+        "feature_set": {
+            "version": FEATURE_SET_VERSION,
+            "names": list(FEATURE_NAMES),
+            "tfidf": tfidf_settings(OFFICIAL_NGRAM_RANGE),
+            "tfidf_vocabulary_size": len(vocabulary),
+            "matrix": "scipy sparse CSR: TF-IDF columns followed by the 24 vector columns",
+        },
         "cv": {
-            "method": "StratifiedGroupKFold, shuffled, grouped by registered domain",
+            "strategy": strategy,
+            "strategy_source": strategy_source,
+            "method": FOLD_METHODS[strategy],
             "n_splits": n_splits,
             "seed": seed,
-            "grouping_source": "own decision inherited from phase 1; the corpus does not cover it",
+            "strategy_note": "random folds as in the papers (P02 and others); grouped folds by "
+            "registered domain are the robustness analysis",
             "reuse": "the same folds serve the search, the out-of-fold predictions and the "
             "threshold",
             "folds": [
@@ -213,7 +262,8 @@ def train(
             ],
         },
         "search": {
-            "method": "RandomizedSearchCV, scoring F1, over the grouped folds",
+            "method": "RandomizedSearchCV, scoring F1, over the CV folds; each candidate is a "
+            "pipeline whose TF-IDF is fitted on the training rows of the fold",
             "method_source": "P09",
             "n_iter": n_iter,
             "n_iter_source": "own decision; the corpus does not give a search budget",
@@ -237,7 +287,7 @@ def train(
             "estimator": "LogisticRegression (scikit-learn defaults)",
             "source": "P27",
             "inputs": [f"oof_probability_{name}" for name in BASE_MODEL_NAMES],
-            "inputs_source": "out-of-fold predictions on the same grouped folds (P15)",
+            "inputs_source": "out-of-fold predictions on the same folds (P15)",
             "coefficients": [round(float(value), 6) for value in result.model.meta_model.coef_[0]],
             "intercept": round(float(result.model.meta_model.intercept_[0]), 6),
         },
@@ -261,6 +311,10 @@ def train(
             "calibration": "not applied; the corpus does not cover it",
             "resampling": "not applied; the classes are balanced since phase 1",
         },
+        "latency_ms": latency,
+        "latency_sample": f"{len(latency_urls)} training URLs drawn with seed "
+        f"{seed + LATENCY_SEED_OFFSET}",
+        "latency_requirement": "RNF-01: mean <= 200 ms end to end (this measures the model only)",
         "parallelism": {
             "n_jobs": n_jobs,
             "estimator_threads": 1,
@@ -276,8 +330,10 @@ def train(
 
     version_dir.mkdir(parents=True, exist_ok=False)
     joblib.dump(result.model, version_dir / MODEL_NAME)
+    report["model_size_bytes"] = (version_dir / MODEL_NAME).stat().st_size
     report["durations"] = {
         **result.durations,
+        "latency_seconds": latency_seconds,
         "total_seconds": round(time.perf_counter() - started, 3),
     }
     (version_dir / REPORT_NAME).write_text(
@@ -301,6 +357,9 @@ def _print_report(report: dict, artifacts_dir: Path) -> None:
         f"recall {mean['recall']:.4f} accuracy {mean['accuracy']:.4f}"
     )
     print(f"threshold {report['threshold']['value']} (mean CV F1 {report['threshold']['mean_f1']})")
+    print(f"folds {report['cv']['strategy']} ({report['cv']['strategy_source']}); latency p50 "
+          f"{report['latency_ms']['p50']} ms, p95 {report['latency_ms']['p95']} ms; size "
+          f"{report['model_size_bytes']} bytes")
     print(f"git commit {report['git']['commit']}, clean {report['git']['clean']}")
     if not report["reportable"]:
         print("warning: exploratory run; it cannot be reported")
@@ -328,6 +387,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--allow-dirty", action="store_true", help="run from an uncommitted tree; not reportable"
     )
+    parser.add_argument(
+        "--cv-strategy",
+        choices=FOLD_STRATEGIES,
+        help="CV folds: random (StratifiedKFold) or grouped by registered domain (default: the "
+        "strategy of the split run)",
+    )
+    parser.add_argument("--latency-rows", type=int, default=DEFAULT_LATENCY_ROWS)
+    parser.add_argument("--latency-warmup", type=int, default=DEFAULT_LATENCY_WARMUP)
     arguments = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(arguments)
 
@@ -344,6 +411,9 @@ def main(argv: list[str] | None = None) -> None:
         threshold_grid=make_threshold_grid(args.threshold_step),
         allow_dirty=args.allow_dirty,
         command=command,
+        cv_strategy=args.cv_strategy,
+        latency_rows=args.latency_rows,
+        latency_warmup=args.latency_warmup,
     )
     _print_report(report, args.artifacts_dir)
 

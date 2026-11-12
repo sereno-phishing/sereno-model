@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sereno_model.data.normalize import parse_url
 from sklearn.base import BaseEstimator, ClassifierMixin
 
 from sereno_model.features.build import AUDIT_COLUMNS, METADATA_COLUMNS
@@ -8,13 +9,17 @@ from sereno_model.features.extract import (
     FEATURE_NAMES,
     FEATURE_SET_VERSION,
     FLOAT_FEATURES,
+    features_from_parts,
 )
 from sereno_model.models.stacking import (
     BASE_MODEL_NAMES,
+    MAX_FEATURES,
+    OFFICIAL_NGRAM_RANGE,
     StackingModel,
     feature_columns,
     fit_stacking,
     grouped_folds,
+    make_folds,
     oof_probabilities,
     select_threshold,
 )
@@ -199,3 +204,66 @@ def test_search_ranges_follow_p09():
         assert (min(space["max_depth"]), max(space["max_depth"])) == (6, 10)
         assert min(space["learning_rate"]) == pytest.approx(0.05)
         assert max(space["learning_rate"]) == pytest.approx(0.2)
+
+
+def extracted_matrix() -> pd.DataFrame:
+    """The synthetic matrix with its feature columns computed from its URLs, as Phase 2 does."""
+    frame = synthetic_matrix()
+    vectors = [features_from_parts(parse_url(url)) for url in frame["url"]]
+    frame[list(FEATURE_NAMES)] = pd.DataFrame(vectors, columns=list(FEATURE_NAMES))
+    return frame
+
+
+def test_random_folds_ignore_groups_and_grouped_folds_keep_them():
+    frame = synthetic_matrix()
+    labels, groups = frame["label"], frame["group"].to_numpy()
+    random = make_folds(labels, groups, n_splits=5, seed=SEED, strategy="random")
+    grouped = make_folds(labels, groups, n_splits=5, seed=SEED, strategy="grouped")
+    assert any(set(groups[train]) & set(groups[val]) for train, val in random)
+    assert not any(set(groups[train]) & set(groups[val]) for train, val in grouped)
+    for folds in (random, grouped):
+        assert sorted(np.concatenate([val for _, val in folds])) == list(range(len(frame)))
+    with pytest.raises(ValueError, match="strategy"):
+        make_folds(labels, groups, n_splits=5, seed=SEED, strategy="temporal")
+
+
+def test_fit_stacking_builds_the_vector_plus_char_tfidf_variant_by_default():
+    frame = synthetic_matrix()
+    result = fit_stacking(frame, threshold_grid=[0.5], **small_search())
+    model = result.model
+    assert OFFICIAL_NGRAM_RANGE == (1, 3)
+    vectorizer = model.features.named_transformers_["tfidf"]
+    assert vectorizer.analyzer == "char"
+    assert vectorizer.ngram_range == (1, 3)
+    assert vectorizer.max_features == MAX_FEATURES == 5000
+    assert (vectorizer.norm, vectorizer.use_idf, vectorizer.smooth_idf) == ("l2", True, True)
+    assert vectorizer.sublinear_tf is False
+    assert model.ngram_range == (1, 3)
+    assert result.fold_strategy == "random"
+    assert all(set(params) for params in result.best_params.values())
+    assert not any(key.startswith("model__") for params in result.best_params.values()
+                   for key in params)
+
+
+def test_fit_stacking_can_still_train_the_vector_only_model_on_grouped_folds():
+    frame = synthetic_matrix()
+    result = fit_stacking(
+        frame, threshold_grid=[0.5], ngram_range=None, fold_strategy="grouped", **small_search()
+    )
+    groups = frame["group"].to_numpy()
+    assert result.model.features is None
+    assert not any(set(groups[train]) & set(groups[val]) for train, val in result.folds)
+    assert result.model.score(frame).shape == (len(frame),)
+
+
+def test_model_scores_raw_urls_like_the_feature_matrix():
+    frame = extracted_matrix()
+    model = fit_stacking(frame, threshold_grid=[0.3, 0.5, 0.7], **small_search()).model
+    urls = list(frame["url"])
+    from_matrix = model.score(frame)
+    assert np.allclose(model.score(urls), from_matrix)
+    assert np.allclose(model.score(pd.DataFrame({"url": urls})), from_matrix)
+    assert model.score(urls[0]).shape == (1,)
+    assert model.score_url(urls[0]) == pytest.approx(from_matrix[0])
+    assert np.array_equal(model.predict(urls), (from_matrix >= model.threshold).astype(int))
+    assert np.allclose(model.predict_proba(urls)[:, 1], from_matrix)
