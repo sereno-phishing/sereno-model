@@ -32,7 +32,7 @@ Groups and definitions (own implementation details where the corpus gives no exa
 
 from functools import cache
 
-from sereno_model.data.domains import _extractor, registered_domain
+from sereno_model.data.domains import registered_domain, split_host
 from sereno_model.data.normalize import UrlParts, parse_url
 from sereno_model.features.extract import is_ip_address, measured_path, measured_text, strip_www
 
@@ -84,7 +84,7 @@ _SHORTENERS = frozenset(domain for domain, _ in SHORTENER_DOMAINS)
 @cache
 def _is_public_suffix(candidate: str) -> bool:
     """True when ``candidate`` (lowercase, dot-separated) is an ICANN public suffix."""
-    found = _extractor()(candidate)
+    found = split_host(candidate)
     return not found.domain and found.suffix == candidate
 
 
@@ -104,7 +104,7 @@ def tld_in_subdomain(parts: UrlParts) -> int:
     host = strip_www(parts.host)
     if is_ip_address(host):
         return 0
-    found = _extractor()(host)
+    found = split_host(host)
     if not (found.domain and found.suffix and found.subdomain):
         return 0
     return int(_has_suffix_run(found.subdomain.split("."), 0))

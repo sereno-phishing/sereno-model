@@ -25,6 +25,14 @@ def _extractor() -> tldextract.TLDExtract:
     )
 
 
+def split_host(host: str) -> tldextract.ExtractResult:
+    """Subdomain, domain and ICANN suffix of ``host``, as found by the shared extractor.
+
+    ``host`` is passed through unchanged: callers decide whether to lowercase it first.
+    """
+    return _extractor()(host)
+
+
 def registered_domain(host: str) -> str:
     """Grouping key of ``host``: its registered domain, in lowercase.
 
@@ -32,7 +40,7 @@ def registered_domain(host: str) -> str:
     suffix) is its own key, in lowercase and without a leading ``www.``.
     """
     lowered = host.lower()
-    found = _extractor()(lowered)
+    found = split_host(lowered)
     if found.domain and found.suffix:
         return f"{found.domain}.{found.suffix}"
     return lowered.removeprefix("www.") or lowered

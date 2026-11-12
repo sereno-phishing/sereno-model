@@ -89,6 +89,24 @@ def test_extractor_is_built_once():
     assert domains._extractor() is domains._extractor()
 
 
+@pytest.mark.parametrize(
+    "host", ["pagos.tienda.com.pe", "user.github.io", "192.168.0.1", "com.pe", "Shop.CO.uk", "x"]
+)
+def test_split_host_is_the_shared_extractor_result(host):
+    assert domains.split_host(host) == domains._extractor()(host)
+
+
+def test_no_module_outside_domains_reaches_the_private_extractor():
+    package = Path(domains.__file__).parents[1]
+    offenders = [
+        str(path.relative_to(package))
+        for path in package.rglob("*.py")
+        if path.name != "domains.py" and "_extractor" in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
+
+
 def test_snapshot_id_is_the_sha256_of_the_list_shipped_with_tldextract():
     shipped = Path(tldextract.__file__).parent / ".tld_set_snapshot"
 

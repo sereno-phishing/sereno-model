@@ -52,7 +52,7 @@ import ipaddress
 import math
 from collections import Counter
 
-from sereno_model.data.domains import _extractor
+from sereno_model.data.domains import split_host
 from sereno_model.data.normalize import DEFAULT_PORTS, UrlParts, parse_url
 
 FEATURE_SET_VERSION = "2"
@@ -135,7 +135,7 @@ def is_ip_address(host: str) -> bool:
 
 def _host_structure(host: str) -> tuple[int, int]:
     """``(subdomain_count, tld_length)`` of a host that is not an IP address."""
-    found = _extractor()(host)
+    found = split_host(host)
     if not (found.domain and found.suffix):
         return 0, len(found.suffix)
     return sum(1 for label in found.subdomain.split(".") if label), len(found.suffix)
