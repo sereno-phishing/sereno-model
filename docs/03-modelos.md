@@ -31,10 +31,10 @@ El ADD no fija cómo se producen las entradas del meta-modelo, la validación cr
 
 ## Entradas
 
-- `data/processed/20261112T025607Z/features_train.parquet`: 64,423 filas (32,212 phishing y 32,211 legítimas).
-- `data/processed/20261112T025607Z/features_test.parquet`: 16,107 filas (8,053 y 8,054). Solo se usa en la evaluación final.
+- `data/processed/20261112T233800Z/features_train.parquet`: 64,424 filas (32,212 phishing y 32,212 legítimas), hash `cd449ecc…a169`. Partición aleatoria `20261112T232911Z`; matrices generadas desde el commit `1df9c0a` con el repositorio limpio.
+- `data/processed/20261112T233800Z/features_test.parquet`: 16,106 filas (8,053 y 8,053). Solo se usa en la evaluación final.
 - Columna `group` (dominio registrado), para los pliegues agrupados del análisis de robustez y para el análisis de errores.
-- Las matrices de arriba son de la partición agrupada anterior; con la partición aleatoria hay que regenerar la Fase 2 (ver el registro del 2026-11-12).
+- Las corridas 1.0.0 y de diagnóstico usaron las matrices `20261112T025607Z` de la partición agrupada anterior.
 
 ## Método aprobado
 
