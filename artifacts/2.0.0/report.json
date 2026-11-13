@@ -1,0 +1,539 @@
+{
+  "created_at": "2026-11-13T22:19:01Z",
+  "run_type": "model selection and training: cross-validation on the training split only",
+  "reportable": true,
+  "command": "python -m sereno_model.models.train --version 2.0.0 --n-jobs 4",
+  "git": {
+    "commit": "7c3255b902e1e4ccff8aee81fc24aafbf46bfa7c",
+    "clean": true
+  },
+  "seed": 20261111,
+  "model": {
+    "version": "2.0.0",
+    "file": "model.joblib",
+    "class": "sereno_model.models.stacking.StackingModel",
+    "input": "a URL, a list of URLs or a frame with a url column; the measured text and vector v2 are computed from the URL",
+    "output": "score(X) is the meta-model phishing probability in [0, 1]; predict(X) is 1 (phishing) when the score reaches the threshold, else 0 (legitimate); score_url(url) scores one URL",
+    "loading": "joblib.load; needs sereno_model and the library versions below"
+  },
+  "input": {
+    "features_run": "processed/20261112T233800Z",
+    "train_file": "features_train.parquet",
+    "train_rows": 64424,
+    "train_phishing": 32212,
+    "train_legitimate": 32212,
+    "train_content_hash": "cd449ecc9e9a41cfba84eb1304ac4dac0580595aa3585d28deefa70580f9a169",
+    "train_content_hash_verified": true,
+    "partition_hash": "795e11153ee5805db62ef9ae573be198f4cdd960dd252f8d85648a8bb779b427",
+    "split_run": "processed/20261112T232911Z",
+    "split_seed": 20261111,
+    "split_strategy": "random",
+    "assemble_run": {
+      "dir": "processed/20261111T222725Z",
+      "content_hash": "b3a2e8994c11aeb0e94e8c306e206df664ffcd29eb04e7e15135d449837b5f9c"
+    },
+    "test_split": "not read"
+  },
+  "feature_set": {
+    "version": "2",
+    "names": [
+      "url_length",
+      "dot_count",
+      "has_at",
+      "host_length",
+      "subdomain_count",
+      "host_hyphen_count",
+      "host_is_ip",
+      "has_port",
+      "tld_length",
+      "path_length",
+      "path_depth",
+      "has_double_slash",
+      "query_length",
+      "query_param_count",
+      "digit_count",
+      "digit_ratio",
+      "question_mark_count",
+      "equals_count",
+      "ampersand_count",
+      "percent_count",
+      "underscore_count",
+      "tilde_count",
+      "slash_count",
+      "url_entropy"
+    ],
+    "tfidf": {
+      "analyzer": "char",
+      "ngram_range": [
+        1,
+        3
+      ],
+      "max_features": 5000,
+      "lowercase": true,
+      "norm": "l2",
+      "use_idf": true,
+      "smooth_idf": true,
+      "sublinear_tf": false,
+      "max_features_source": "P02",
+      "transformer_params_source": "P32 (also the scikit-learn defaults)",
+      "selection_source": "variant C of artifacts/diagnostics/20261112T192824Z",
+      "text": "measured text of vector v2: normalized URL without scheme and separator, leading 'www.' labels, default port and trailing slashes",
+      "fitted_on": "training rows of each fold only (pipeline inside the search and the out-of-fold predictions); the final vectorizer on the whole training split"
+    },
+    "tfidf_vocabulary_size": 5000,
+    "matrix": "scipy sparse CSR: TF-IDF columns followed by the 24 vector columns"
+  },
+  "cv": {
+    "strategy": "random",
+    "strategy_source": "split run",
+    "method": "StratifiedKFold(n_splits, shuffle=True, random_state=seed); groups ignored, as in the papers",
+    "n_splits": 5,
+    "seed": 20261111,
+    "strategy_note": "random folds as in the papers (P02 and others); grouped folds by registered domain are the robustness analysis",
+    "reuse": "the same folds serve the search, the out-of-fold predictions and the threshold",
+    "folds": [
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6443,
+        "validation_groups": 8658
+      },
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6443,
+        "validation_groups": 8640
+      },
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6442,
+        "validation_groups": 8686
+      },
+      {
+        "validation_rows": 12885,
+        "validation_phishing": 6442,
+        "validation_groups": 8712
+      },
+      {
+        "validation_rows": 12884,
+        "validation_phishing": 6442,
+        "validation_groups": 8727
+      }
+    ]
+  },
+  "search": {
+    "method": "RandomizedSearchCV, scoring F1, over the CV folds; each candidate is a pipeline whose TF-IDF is fitted on the training rows of the fold",
+    "method_source": "P09",
+    "n_iter": 20,
+    "n_iter_source": "own decision; the corpus does not give a search budget",
+    "spaces": {
+      "random_forest": {
+        "n_estimators": [
+          50,
+          100
+        ],
+        "max_depth": [
+          1,
+          10
+        ]
+      },
+      "xgboost": {
+        "n_estimators": [
+          25,
+          100
+        ],
+        "max_depth": [
+          6,
+          10
+        ],
+        "learning_rate": [
+          0.05,
+          0.2
+        ]
+      },
+      "lightgbm": {
+        "n_estimators": [
+          20,
+          100
+        ],
+        "max_depth": [
+          6,
+          10
+        ],
+        "learning_rate": [
+          0.05,
+          0.2
+        ]
+      }
+    },
+    "spaces_source": "P09 ranges, both ends included; learning rates on a 0.01 grid (own decision)"
+  },
+  "base_models": {
+    "random_forest": {
+      "best_params": {
+        "n_estimators": 62,
+        "max_depth": 10
+      },
+      "search_best_f1": 0.878111,
+      "cv": {
+        "threshold": 0.5,
+        "mean": {
+          "f1": 0.878111,
+          "precision": 0.921696,
+          "recall": 0.838476,
+          "accuracy": 0.883615
+        },
+        "per_fold": [
+          {
+            "f1": 0.880835,
+            "precision": 0.919905,
+            "recall": 0.844948,
+            "accuracy": 0.885681
+          },
+          {
+            "f1": 0.878949,
+            "precision": 0.926997,
+            "recall": 0.835636,
+            "accuracy": 0.884905
+          },
+          {
+            "f1": 0.881248,
+            "precision": 0.924927,
+            "recall": 0.841509,
+            "accuracy": 0.886612
+          },
+          {
+            "f1": 0.874817,
+            "precision": 0.918259,
+            "recall": 0.8353,
+            "accuracy": 0.880481
+          },
+          {
+            "f1": 0.874705,
+            "precision": 0.918388,
+            "recall": 0.834989,
+            "accuracy": 0.880394
+          }
+        ]
+      },
+      "cv_note": "out-of-fold probabilities at threshold 0.5"
+    },
+    "xgboost": {
+      "best_params": {
+        "n_estimators": 54,
+        "max_depth": 9,
+        "learning_rate": 0.19
+      },
+      "search_best_f1": 0.944034,
+      "cv": {
+        "threshold": 0.5,
+        "mean": {
+          "f1": 0.944034,
+          "precision": 0.955948,
+          "recall": 0.932416,
+          "accuracy": 0.944726
+        },
+        "per_fold": [
+          {
+            "f1": 0.94602,
+            "precision": 0.957989,
+            "recall": 0.934347,
+            "accuracy": 0.946682
+          },
+          {
+            "f1": 0.942285,
+            "precision": 0.953592,
+            "recall": 0.931243,
+            "accuracy": 0.942957
+          },
+          {
+            "f1": 0.944117,
+            "precision": 0.956217,
+            "recall": 0.932319,
+            "accuracy": 0.94482
+          },
+          {
+            "f1": 0.940009,
+            "precision": 0.953674,
+            "recall": 0.926731,
+            "accuracy": 0.940861
+          },
+          {
+            "f1": 0.94774,
+            "precision": 0.958267,
+            "recall": 0.937442,
+            "accuracy": 0.948308
+          }
+        ]
+      },
+      "cv_note": "out-of-fold probabilities at threshold 0.5"
+    },
+    "lightgbm": {
+      "best_params": {
+        "n_estimators": 89,
+        "max_depth": 9,
+        "learning_rate": 0.18
+      },
+      "search_best_f1": 0.948431,
+      "cv": {
+        "threshold": 0.5,
+        "mean": {
+          "f1": 0.948431,
+          "precision": 0.958091,
+          "recall": 0.938967,
+          "accuracy": 0.948948
+        },
+        "per_fold": [
+          {
+            "f1": 0.949381,
+            "precision": 0.958696,
+            "recall": 0.940245,
+            "accuracy": 0.949864
+          },
+          {
+            "f1": 0.947823,
+            "precision": 0.958426,
+            "recall": 0.937451,
+            "accuracy": 0.94839
+          },
+          {
+            "f1": 0.948112,
+            "precision": 0.959028,
+            "recall": 0.937442,
+            "accuracy": 0.9487
+          },
+          {
+            "f1": 0.945552,
+            "precision": 0.955901,
+            "recall": 0.935424,
+            "accuracy": 0.946139
+          },
+          {
+            "f1": 0.951286,
+            "precision": 0.958406,
+            "recall": 0.944272,
+            "accuracy": 0.951645
+          }
+        ]
+      },
+      "cv_note": "out-of-fold probabilities at threshold 0.5"
+    }
+  },
+  "meta_model": {
+    "estimator": "LogisticRegression (scikit-learn defaults)",
+    "source": "P27",
+    "inputs": [
+      "oof_probability_random_forest",
+      "oof_probability_xgboost",
+      "oof_probability_lightgbm"
+    ],
+    "inputs_source": "out-of-fold predictions on the same folds (P15)",
+    "coefficients": [
+      -1.270108,
+      3.097793,
+      6.193999
+    ],
+    "intercept": -3.833094
+  },
+  "stacking": {
+    "cv": {
+      "threshold": 0.45,
+      "mean": {
+        "f1": 0.949689,
+        "precision": 0.953268,
+        "recall": 0.946138,
+        "accuracy": 0.949879
+      },
+      "per_fold": [
+        {
+          "f1": 0.950483,
+          "precision": 0.953601,
+          "recall": 0.947385,
+          "accuracy": 0.95064
+        },
+        {
+          "f1": 0.9491,
+          "precision": 0.953335,
+          "recall": 0.944901,
+          "accuracy": 0.949321
+        },
+        {
+          "f1": 0.949541,
+          "precision": 0.952656,
+          "recall": 0.946445,
+          "accuracy": 0.949709
+        },
+        {
+          "f1": 0.946703,
+          "precision": 0.951828,
+          "recall": 0.941633,
+          "accuracy": 0.946993
+        },
+        {
+          "f1": 0.952618,
+          "precision": 0.954921,
+          "recall": 0.950326,
+          "accuracy": 0.952732
+        }
+      ]
+    },
+    "cv_note": "out-of-fold meta-model scores at the chosen threshold; the threshold was chosen on these same folds, so these figures are slightly optimistic"
+  },
+  "threshold": {
+    "value": 0.45,
+    "mean_f1": 0.949689,
+    "fold_f1": [
+      0.950483,
+      0.9491,
+      0.949541,
+      0.946703,
+      0.952618
+    ],
+    "rule": "highest mean F1 over the folds of the meta-model's out-of-fold scores; ties go to the value closest to 0.5; a score equal to the threshold is phishing",
+    "rule_source": "P17",
+    "grid": [
+      0.01,
+      0.02,
+      0.03,
+      0.04,
+      0.05,
+      0.06,
+      0.07,
+      0.08,
+      0.09,
+      0.1,
+      0.11,
+      0.12,
+      0.13,
+      0.14,
+      0.15,
+      0.16,
+      0.17,
+      0.18,
+      0.19,
+      0.2,
+      0.21,
+      0.22,
+      0.23,
+      0.24,
+      0.25,
+      0.26,
+      0.27,
+      0.28,
+      0.29,
+      0.3,
+      0.31,
+      0.32,
+      0.33,
+      0.34,
+      0.35,
+      0.36,
+      0.37,
+      0.38,
+      0.39,
+      0.4,
+      0.41,
+      0.42,
+      0.43,
+      0.44,
+      0.45,
+      0.46,
+      0.47,
+      0.48,
+      0.49,
+      0.5,
+      0.51,
+      0.52,
+      0.53,
+      0.54,
+      0.55,
+      0.56,
+      0.57,
+      0.58,
+      0.59,
+      0.6,
+      0.61,
+      0.62,
+      0.63,
+      0.64,
+      0.65,
+      0.66,
+      0.67,
+      0.68,
+      0.69,
+      0.7,
+      0.71,
+      0.72,
+      0.73,
+      0.74,
+      0.75,
+      0.76,
+      0.77,
+      0.78,
+      0.79,
+      0.8,
+      0.81,
+      0.82,
+      0.83,
+      0.84,
+      0.85,
+      0.86,
+      0.87,
+      0.88,
+      0.89,
+      0.9,
+      0.91,
+      0.92,
+      0.93,
+      0.94,
+      0.95,
+      0.96,
+      0.97,
+      0.98,
+      0.99
+    ],
+    "grid_source": "own decision",
+    "test_data_used": false
+  },
+  "not_applied": {
+    "calibration": "not applied; the corpus does not cover it",
+    "resampling": "not applied; the classes are balanced since phase 1"
+  },
+  "latency_ms": {
+    "rows": 1000,
+    "warmup": 50,
+    "threads": 1,
+    "p50": 6.884,
+    "p95": 7.659,
+    "mean": 6.886,
+    "max": 8.857,
+    "scope": "vector extraction, measured text, TF-IDF and vector union, three base models and meta-model; no network, cache or server"
+  },
+  "latency_sample": "1000 training URLs drawn with seed 20261112",
+  "latency_requirement": "RNF-01: mean <= 200 ms end to end (this measures the model only)",
+  "parallelism": {
+    "n_jobs": 4,
+    "estimator_threads": 1,
+    "note": "workers run whole fits; results do not depend on n_jobs"
+  },
+  "machine": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "logical_cpus": 16
+  },
+  "versions": {
+    "python": "3.12.10",
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "scikit-learn": "1.9.1",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "joblib": "1.6.0"
+  },
+  "model_size_bytes": 2858347,
+  "durations": {
+    "search_seconds": 2620.861,
+    "oof_seconds": 216.711,
+    "refit_seconds": 100.518,
+    "latency_seconds": 7.568,
+    "total_seconds": 2948.291
+  }
+}

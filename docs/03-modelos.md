@@ -182,3 +182,20 @@ Cambios en el código:
 - `train.py` toma la estrategia de pliegues de la partición registrada en `features_report.json` (las particiones anteriores, sin ese dato, eran agrupadas), salvo que `--cv-strategy` indique otra. El `report.json` guarda el conjunto de características con los parámetros del TF-IDF, la estrategia y el método de los pliegues, la latencia p50 y p95 por URL, el tamaño de `model.joblib`, las versiones, el commit y la semilla. Búsqueda por defecto: 20 candidatos por modelo base.
 
 La corrida oficial no se hizo en esta tarea: corre en el equipo de Andrés y tarda horas.
+
+### 2026-11-13: corrida oficial de entrenamiento 2.0.0
+
+Comando: `python -m sereno_model.models.train --version 2.0.0 --n-jobs 4`, desde el commit `7c3255b` con el repositorio limpio. Semilla 20261111; matriz de entrenamiento `processed/20261112T233800Z` (64 424 filas, 32 212 por clase) con hash `cd449ecc…a169`. Pliegues aleatorios estratificados, tomados de la partición. Duración: 2948 s (búsqueda 2621 s). Reporte en `artifacts/2.0.0/report.json`.
+
+| Modelo | F1 en validación cruzada | Hiperparámetros elegidos |
+|---|---|---|
+| Random Forest | 0.8781 | 62 árboles, profundidad 10 |
+| XGBoost | 0.9440 | 54 árboles, profundidad 9, tasa 0.19 |
+| LightGBM | 0.9484 | 89 árboles, profundidad 9, tasa 0.18 |
+| Stacking | 0.9497 (precisión 0.9533, recall 0.9461, exactitud 0.9499) | Umbral 0.45 |
+
+El F1 del Stacking por pliegue va de 0.9467 a 0.9526. El umbral se eligió sobre los mismos pliegues, así que estas cifras son algo optimistas. Coeficientes del metamodelo: Random Forest -1.27, XGBoost 3.10, LightGBM 6.19.
+
+Latencia del modelo por URL, medida en 1000 URL de entrenamiento con un hilo: p50 6.884 ms, p95 7.659 ms (RNF-01 pide una media de 200 ms de extremo a extremo; esto mide solo el modelo). Tamaño de `model.joblib`: 2.86 MB.
+
+El F1 en validación cruzada queda por debajo de la meta del ADD (0.96) y del valor de la ablación (0.9519). La prueba ciega no se usó.
