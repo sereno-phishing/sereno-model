@@ -1,4 +1,7 @@
-"""Download raw data sources into timestamped snapshots and record them in a manifest."""
+"""Download raw data sources into timestamped snapshots and record them in a manifest.
+
+Sources and snapshots: docs/01-datos.md.
+"""
 
 import argparse
 import hashlib
@@ -118,8 +121,8 @@ def acquire(
 ) -> dict:
     """Store one snapshot of a source and return its manifest record.
 
-    A source with a published checksum is immutable, so it is downloaded only once. Feeds change
-    over time, so each call keeps a new snapshot and never replaces an earlier one.
+    A source with a published checksum is downloaded once; a feed gets a new snapshot on
+    every call.
     """
     downloads = load_downloads(manifest_path)
     if source.expected_sha256:

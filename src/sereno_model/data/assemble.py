@@ -1,14 +1,6 @@
 """Assemble the modelling dataset: the phishing URLs plus a form-matched legitimate sample.
 
-Phishing is first capped per registered domain: a domain with more than
-``max_phishing_per_domain`` phishing URLs keeps that many, drawn at random, so that a few shared
-hosting platforms and URL shorteners do not dominate the class. Legitimate URLs are not capped.
-
-The form stratum of a URL is the triple (has path or query, scheme, host starts with ``www.``).
-The legitimate class is sampled so that each stratum holds ``legit_ratio`` legitimate URLs per
-phishing URL. Strata without a path that lack real URLs are completed with URLs built from
-Majestic Million domains; strata with a path borrow from the surplus of the other strata with a
-path. Whatever cannot be met is reported as a shortfall instead of being hidden.
+Per-domain cap, form strata and Majestic completion: docs/01-datos.md.
 """
 
 import argparse
@@ -71,11 +63,7 @@ DATASET_SCHEMA = pa.schema(
 
 @dataclass(frozen=True)
 class Prepared:
-    """A cleaning run indexed by form stratum, ready to be sampled with any ratio.
-
-    ``urls``, ``phishing`` and ``phishing_trailing_slash`` describe the phishing left by the cap
-    per registered domain; ``phishing_cleaned`` counts the phishing of the cleaning run.
-    """
+    """``phishing_cleaned`` counts phishing before the per-domain cap; the rest after it."""
 
     clean_run: str
     clean_hash: str
@@ -106,7 +94,7 @@ def stratum_name(stratum: Stratum) -> str:
 
 
 def quota(legit_ratio: float, phishing_count: int) -> int:
-    """Legitimate URLs wanted in a stratum: ``legit_ratio * phishing_count`` rounded half up."""
+    """``legit_ratio * phishing_count``, rounded half up."""
     exact = Decimal(str(legit_ratio)) * phishing_count
     return int(exact.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
@@ -137,7 +125,7 @@ def synthetic_limit(real_count: int, max_share: float) -> int | None:
 
 
 def distance(first: dict[Stratum, int], second: dict[Stratum, int], strata: list) -> float | None:
-    """Total variation distance between two form distributions restricted to ``strata``."""
+    """Total variation distance between two form distributions over ``strata``."""
     first_total = sum(first[stratum] for stratum in strata)
     second_total = sum(second[stratum] for stratum in strata)
     if not first_total or not second_total:
@@ -160,7 +148,6 @@ def _rng(seed: int, *purpose: object) -> random.Random:
 
 
 def latest_clean_run(data_dir: Path) -> str:
-    """Name of the newest folder under ``processed/`` that holds a cleaning report."""
     processed = data_dir / "processed"
     runs = [path.parent.name for path in processed.glob("*/clean_report.json")]
     if not runs:
@@ -203,11 +190,10 @@ def _is_normalized(url: str) -> bool:
 def cap_phishing(
     by_domain: dict[str, list[str]], cap: int | None, seed: int
 ) -> tuple[set[str], list[dict]]:
-    """Phishing URLs to drop so that no registered domain keeps more than ``cap`` of them.
+    """Phishing URLs to drop so no registered domain keeps more than ``cap``.
 
-    Each domain above the cap keeps exactly ``cap`` URLs, drawn from its sorted URLs with its
-    own stream: the draw depends on the seed, the domain and its URLs, and on nothing else.
-    Returns the dropped URLs and the capped domains, largest first.
+    The draw depends only on the seed, the domain and its URLs. Returns the dropped URLs and
+    the capped domains, largest first.
     """
     dropped: set[str] = set()
     capped = []
@@ -321,7 +307,7 @@ def build_synthetic(stratum: Stratum, domains: list[str], with_slash: int) -> li
 def select(
     prepared: Prepared, legit_ratio: float, seed: int, max_majestic_share: float
 ) -> Selection:
-    """Choose the legitimate URLs: real ones first, then borrowed or synthetic ones."""
+    """Real legitimate URLs first, then borrowed or synthetic ones."""
     quotas = {stratum: quota(legit_ratio, prepared.phishing[stratum]) for stratum in STRATA}
     taken: dict[Stratum, list[str]] = {}
     surplus: list[tuple[str, Stratum]] = []
@@ -398,7 +384,7 @@ def select(
 
 
 def build_dataset(prepared: Prepared, selection: Selection) -> pd.DataFrame:
-    """Capped phishing rows, the selected real legitimate rows and the synthetic ones, by URL."""
+    """Capped phishing, selected real legitimate and synthetic rows, sorted by URL."""
     urls = prepared.urls
     real = urls[(urls["label"] == PHISHING) | urls["url"].isin(selection.real_urls)]
     synthetic = pd.DataFrame(
@@ -438,7 +424,7 @@ def dataset_hash(frame: pd.DataFrame) -> str:
 
 
 def summarize(prepared: Prepared, selection: Selection) -> dict:
-    """Totals, shares and form distances of a selection; nothing here depends on the clock."""
+    """Totals, shares and form distances of a selection; independent of the clock."""
     rows = selection.rows
     phishing = prepared.phishing
     before = {stratum: len(prepared.legitimate[stratum]) for stratum in STRATA}
@@ -511,9 +497,8 @@ def assemble(
 ) -> dict:
     """Write ``dataset.parquet`` and ``assemble_report.json`` to a new ``processed/`` folder.
 
-    The newest cleaning run is used unless ``clean_run`` names one. Its ``urls.parquet`` must
-    reproduce the content hash of its report. An existing output folder is never overwritten.
-    ``max_phishing_per_domain`` set to ``None`` or 0 keeps every phishing URL.
+    Uses the newest cleaning run unless ``clean_run`` is given and never overwrites a folder.
+    ``max_phishing_per_domain`` of ``None`` or 0 disables the cap.
     """
     ratio = DEFAULT_LEGIT_RATIO if legit_ratio is None else legit_ratio
     _check_parameters(ratio, majestic_top_n, max_majestic_share, max_phishing_per_domain)

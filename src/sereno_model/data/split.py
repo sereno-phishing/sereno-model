@@ -1,11 +1,6 @@
 """Split the assembled dataset into a fixed train/test partition, stratified by class.
 
-Rows are sorted by URL and split into ``n_splits`` shuffled folds; one fold is the test set. The
-default ``random`` strategy uses ``StratifiedKFold``, the random split of the corpus papers (P02
-and others), so a registered domain may have URLs on both sides. The ``grouped`` strategy uses
-``StratifiedGroupKFold`` by registered domain, so the test set only holds unseen domains; it is
-kept as a robustness analysis. The leakage controls that can be run on the data alone are saved
-with the report; a failed one stops the run before anything is written.
+Strategies and leakage controls: docs/01-datos.md.
 """
 
 import argparse
@@ -83,7 +78,6 @@ def _share(part: int, total: int) -> float | None:
 
 
 def latest_assemble_run(data_dir: Path) -> str:
-    """Name of the newest folder under ``processed/`` that holds an assemble report."""
     processed = data_dir / "processed"
     runs = [path.parent.name for path in processed.glob("*/assemble_report.json")]
     if not runs:
@@ -106,7 +100,6 @@ def load_dataset(data_dir: Path, run: str) -> tuple[pd.DataFrame, str]:
 
 
 def group_keys(urls: list[str]) -> list[str]:
-    """Registered domain of the host of each URL."""
     by_host: dict[str, str] = {}
     keys = []
     for url in urls:
@@ -145,11 +138,7 @@ def held_out_mask(
 
 
 def grouped_folds(labels, groups, n_splits: int, seed: int) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Cross-validation folds where every row of a group lands in the same validation fold.
-
-    The single fold builder of the package: model training, diagnostics, ablations and the
-    source-bias probe all call it (or ``make_folds``) so their folds cannot drift apart.
-    """
+    """Stratified folds; every row of a group lands in the same validation fold."""
     labels = np.asarray(labels)
     splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     return [
@@ -314,9 +303,9 @@ def _domain_control(shared_groups: int, strategy: str) -> dict:
 
 
 def leakage_controls(frame: pd.DataFrame, strategy: str = DEFAULT_STRATEGY) -> list[dict]:
-    """One entry per decision gate of the ``control-fuga-datos`` skill, in its order.
+    """One entry per gate of the ``control-fuga-datos`` skill, in its order.
 
-    The domain gate fails only under the grouped strategy; under the random one it is reported.
+    The domain gate fails only under the grouped strategy.
     """
     _check_strategy(strategy)
     duplicated = _in_both(frame, [normalize_url(url) for url in frame["url"]])
@@ -382,9 +371,8 @@ def split(
 ) -> dict:
     """Write ``split.parquet`` and ``split_report.json`` to a new ``processed/`` folder.
 
-    The newest assemble run is used unless ``assemble_run`` names one. Its ``dataset.parquet``
-    must reproduce the content hash of its report. An existing output folder is never
-    overwritten, and nothing is written when a leakage control fails.
+    Uses the newest assemble run unless ``assemble_run`` is given, never overwrites a folder
+    and writes nothing when a leakage control fails.
     """
     if n_splits < 2:
         raise ValueError(f"n_splits must be at least 2, got {n_splits}")

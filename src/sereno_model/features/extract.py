@@ -1,51 +1,7 @@
-"""Base feature vector of a URL, computed from its text alone (feature set version 2).
+"""Base feature vector of a URL, from its text alone (feature set version 2).
 
-The 24 features, their order and their definitions are the ones approved in
-``docs/02-caracteristicas.md``. The module is shared by the training pipeline and by the
-inference server, so it only needs the standard library and ``tldextract``; it never touches
-the network or the disk and never logs the URL, which lives only in memory while it is measured.
-
-Two terms are used throughout:
-
-* *host*: the host of the normalized URL without a leading ``www.``;
-* *measured text*: the normalized URL without the scheme, without ``://``, with that host and
-  without the slashes that end the URL.
-
-Neither the scheme nor the ``www.`` prefix reaches any feature, so ``http://www.example.com/a``
-and ``https://example.com/a`` produce the same vector.
-
-Cases the design document leaves open, as decided here:
-
-* ``www.``: every literal leading ``www.`` label is removed (``www2.`` stays), as long as
-  something is left after removing it. Removing only the first one would let the prefix change
-  the vector of a host such as ``www.www.example.com``.
-* IP hosts: a host is an IP address when it is a dotted-quad decimal IPv4 address or a
-  bracketed IPv6 literal that the standard ``ipaddress`` module accepts. Integer, hexadecimal,
-  octal or shortened IPv4 spellings (``3232235777``, ``0x7f.0.0.1``, ``1.2.3``) are not.
-* Hosts without a registered domain (an IP address, a single label, an unknown suffix or a bare
-  public suffix): ``subdomain_count`` is 0. ``tld_length`` is 0 unless the host is itself a
-  public suffix, whose length is then reported.
-* Suffixes: ICANN suffixes only, so ``victim.pages.dev`` has one subdomain and the suffix
-  ``dev``. Empty labels (``a..example.com``) are not counted as subdomains.
-* Port: 80 and 443 count as default ports whatever the scheme. The normalization only drops
-  the default port of the URL's own scheme, so ``http://host:443/`` would otherwise differ from
-  ``https://host:443/`` and the scheme would reach the vector. A default port is left out of
-  the measured text and ``has_port`` is 1 only for any other non-empty port. An empty port
-  (``host:``) gives 0, although its colon stays in the measured text.
-* Userinfo: ``user:password@`` stays in the measured text, so it counts for ``has_at``, the
-  length, the symbol counts and the entropy; it is not part of the host.
-* Path: the slashes that end the URL are not measured, so ``/a/b/`` counts as ``/a/b`` and a
-  bare ``/`` as an empty path; sources differ in whether they write them (version 2 of the
-  feature set, after Ghalechyan et al., 2024). A slash that precedes a query is kept. An empty
-  path has length 0 and depth 0. Depth counts the non-empty segments between slashes.
-* Query: an absent query and an empty one (a bare ``?``) both give length 0 and no parameters;
-  the ``?`` itself is never part of the length. Parameters are the non-empty pieces between
-  ``&``, so ``a=1&&b=2&`` has two.
-* ``has_double_slash`` looks at the path and at the query only; the ``//`` that follows the
-  scheme is not in either.
-* Digits: ASCII ``0``-``9`` only. ``digit_ratio`` is 0.0 if the measured text were empty, which
-  a valid URL cannot produce because its host is never empty.
-* Entropy: Shannon entropy in bits over the characters (code points) of the measured text.
+Shared with the inference server: standard library and tldextract only, no network or
+disk, URL never logged. Definitions and edge cases: docs/02-caracteristicas.md.
 """
 
 import ipaddress
@@ -112,8 +68,7 @@ def measured_path(parts: UrlParts) -> str:
 
 
 def measured_text(parts: UrlParts) -> str:
-    """The normalized URL without the scheme, ``://``, the host ``www.``, a default port and
-    the slashes that end it."""
+    """The normalized URL without scheme, ``://``, host ``www.``, default port or end slashes."""
     userinfo = "" if parts.userinfo is None else f"{parts.userinfo}@"
     port = visible_port(parts)
     port = "" if port is None else f":{port}"
@@ -196,7 +151,6 @@ def features_from_parts(parts: UrlParts) -> FeatureVector:
 def extract_features(url: str) -> FeatureVector:
     """The feature vector of a raw URL, in the order of ``FEATURE_NAMES``.
 
-    Raises :class:`sereno_model.data.normalize.InvalidUrlError` when ``url`` is not a usable
-    http(s) URL.
+    Raises ``InvalidUrlError`` when ``url`` is not a usable http(s) URL.
     """
     return features_from_parts(parse_url(url))

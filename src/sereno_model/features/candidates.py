@@ -1,33 +1,7 @@
-"""Candidate list-based features, measured apart from the base vector (version 2).
+"""Candidate list-based features (G1 to G3), measured apart from the base vector.
 
-These features are not part of ``FEATURE_NAMES`` and never reach the official model: they exist
-only so the ablation in ``sereno_model.models.ablation`` can measure what each group adds
-(``docs/02-caracteristicas.md``, list-feature measurement approved on 2026-11-12). Like the
-extractor, the module needs only the standard library and ``tldextract``, uses the same parsed
-URL (:func:`sereno_model.data.normalize.parse_url`) and never logs the URL.
-
-Lists are fixed constants of this module, each entry with the corpus passages that print it
-(``P##:line`` in the extracted text of the TDP papers). Nothing is downloaded and nothing is
-derived from the data.
-
-Groups and definitions (own implementation details where the corpus gives no exact rule):
-
-* G1 ``tld_in_subdomain``: 1 when a run of one or more consecutive non-empty subdomain labels is
-  an ICANN public suffix of the bundled list (``paypal.com.evil.net``; also ``de.example.org``,
-  since a country code is a suffix). 0 for an IP host or a host without a registered domain.
-* G1 ``tld_in_path``: 1 when a path segment (between slashes, lowercased, without the slashes
-  that end the URL) holds a run of consecutive non-empty dot-separated labels that is an ICANN
-  public suffix, is preceded by a dot and has a non-empty label somewhere before it
-  (``/paypal.com/``). The query is not the path. File extensions that are also suffixes
-  (``.zip``, ``.py``, ``.do``) count: the list cannot tell them apart.
-* G2 ``sensitive_word_count``: occurrences of the listed words in the measured text of the
-  extractor (no scheme, no ``www.``), lowercased and with every character that is not an ASCII
-  letter or digit removed; the words are compared after the same removal, so ``log in``,
-  ``log-in`` and ``login`` are one word. Substring counting, non-overlapping per word, summed
-  over the distinct words: ``banks`` counts ``bank``, and a word can also arise across a
-  boundary (``blog.info`` holds ``login``).
-* G3 ``is_shortener``: 1 when the registered domain of the host (ICANN suffixes, as in
-  ``sereno_model.data.domains``) is a listed shortener domain.
+They never reach the official model. Standard library and tldextract only; the URL is
+never logged. Lists, papers and definitions: docs/02-caracteristicas.md.
 """
 
 from functools import cache

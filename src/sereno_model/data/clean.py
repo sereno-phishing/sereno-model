@@ -1,4 +1,7 @@
-"""Clean and de-duplicate the raw sources into one labelled URL set with a saved report."""
+"""Clean and de-duplicate the raw sources into one labelled URL set with a saved report.
+
+Rules and counts: docs/01-datos.md.
+"""
 
 import argparse
 import hashlib
@@ -281,8 +284,8 @@ def write_parquet(frame: pd.DataFrame, schema: pa.Schema, path: Path) -> None:
 def clean(data_dir: Path, now: datetime | None = None) -> dict:
     """Write the cleaned outputs to ``data_dir/processed/<UTC timestamp>/`` and return the report.
 
-    Every raw file is checked against the hash recorded in the manifest before it is read. The
-    newest snapshot of each source is used. An existing output folder is never overwritten.
+    Every raw file must match its manifest hash; the newest snapshot of each source is used
+    and no folder is overwritten.
     """
     downloads = load_downloads(data_dir / "manifest.json")
     records = {source: latest_record(downloads, source) for source in (*READERS, MAJESTIC)}

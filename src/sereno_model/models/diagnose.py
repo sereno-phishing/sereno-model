@@ -1,20 +1,6 @@
 """Diagnose the gap between the cross-validated F1 and the ADD target, on the training split only.
 
-Exploration run: its figures are not citable as a final result. Only ``features_train.parquet``
-of a feature run is read, through the same hash-checked loader as ``train``; the blind test
-matrix is never opened. Three measurements:
-
-1. Grouping effect: the approved pipeline (P09 ranges, same ``n_iter``) over the folds grouped
-   by registered domain, as in the official run, and over plain stratified folds that ignore
-   the groups.
-2. Range effect: the grouped folds with wider, own exploratory ranges (not from the corpus).
-3. Error analysis of the grouped stacking's out-of-fold predictions: confusion counts, subgroup
-   metrics by source, by synthetic flag and by the domains capped in the assemble step (the
-   shared platforms and shorteners of ``docs/01-datos.md``), the most frequent registered
-   domains among the errors, and how redundant the base models' errors are.
-
-The report never holds a URL: only registered domains and counts (RNF-05). Each run writes a new
-``<out-dir>/<UTC timestamp>/report.json`` and never overwrites one.
+Exploration run, not citable. Measurements and results: docs/03-modelos.md.
 """
 
 import argparse

@@ -1,17 +1,7 @@
 """Train the Stacking ensemble on the training matrix and save it as a versioned artifact.
 
-Only ``features_train.parquet`` of a feature run is read, after it reproduces the content hash
-recorded in its ``features_report.json``. The blind test matrix is left untouched: it belongs to
-the final evaluation. The model and ``report.json`` go to a new ``artifacts/<version>/`` folder;
-an existing version is never overwritten.
-
-The official model is variant C of the TF-IDF ablation: vector version 2 plus a character TF-IDF
-of the URL (n-grams 1 to 3). The cross-validation folds follow the strategy of the split run
-(random ``StratifiedKFold`` or ``StratifiedGroupKFold`` by registered domain) unless
-``--cv-strategy`` names one. The saved model scores raw URLs.
-
-An official run needs a clean Git working tree. ``--allow-dirty`` runs anyway and marks the
-report as an exploration that cannot be cited.
+Reads only ``features_train.parquet``. An official run needs a clean Git tree;
+``--allow-dirty`` marks it as exploration. Details: docs/03-modelos.md.
 """
 
 import argparse
@@ -75,7 +65,6 @@ class DirtyRepositoryError(RuntimeError):
 
 
 def latest_features_run(data_dir: Path) -> str:
-    """Name of the newest folder under ``processed/`` that holds a features report."""
     processed = data_dir / "processed"
     runs = [path.parent.name for path in processed.glob(f"*/{FEATURES_REPORT}")]
     if not runs:
@@ -158,7 +147,7 @@ def train(
 ) -> dict:
     """Train on the training matrix and write ``model.joblib`` and ``report.json``.
 
-    The newest feature run is used unless ``features_run`` names one; the version defaults to
+    Uses the newest feature run unless ``features_run`` is given; the version defaults to
     the UTC timestamp of the run.
     """
     started = time.perf_counter()

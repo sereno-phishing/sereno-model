@@ -82,13 +82,14 @@ Casos límite, decididos al implementar:
 | Caso | Regla |
 |---|---|
 | «www.» | Se quitan todos los «www.» iniciales mientras quede algo después; `www2.` se conserva. Quitar solo el primero dejaba que el prefijo cambiara el vector de un host como `www.www.ejemplo.com` |
-| Puerto | 80 y 443 cuentan como puerto por defecto con cualquier esquema y no entran al texto medido. La normalización solo quita el del esquema propio, así que sin esta regla `http://host:443/` y `https://host:443/` darían vectores distintos y el esquema llegaría al vector |
+| Puerto | 80 y 443 cuentan como puerto por defecto con cualquier esquema y no entran al texto medido. La normalización solo quita el del esquema propio, así que sin esta regla `http://host:443/` y `https://host:443/` darían vectores distintos y el esquema llegaría al vector. Un puerto vacío (`host:`) da `has_port` 0, aunque sus dos puntos quedan en el texto medido |
 | IP | Cuenta como IP un IPv4 decimal de cuatro partes o un IPv6 entre corchetes. Las formas entera, hexadecimal, octal o abreviada no cuentan |
 | Host sin dominio registrado | IP, una sola etiqueta o sufijo desconocido: `subdomain_count` y `tld_length` valen 0. Si el host es un sufijo público, `tld_length` es su longitud |
 | Sufijos | Solo ICANN: `victim.pages.dev` tiene un subdominio y sufijo `dev`. Las etiquetas vacías no cuentan |
 | Usuario y contraseña | Quedan en el texto medido, así que cuentan para `has_at`, la longitud, los símbolos y la entropía; no forman parte del host |
 | Ruta | Las barras con que termina la URL no se miden: `/a/b/` cuenta como `/a/b` y una `/` sola como ruta vacía (Ghalechyan et al., 2024; P30). La barra que precede a una consulta se conserva. Ruta vacía: longitud 0 y profundidad 0 |
 | Consulta | Ausente o vacía («?» solo): longitud 0 y 0 parámetros. El «?» no cuenta en la longitud. Los parámetros son los tramos no vacíos entre «&» |
+| «//» | `has_double_slash` solo mira la ruta y la consulta; la «//» que sigue al esquema no cuenta |
 | Dígitos | Solo ASCII, del 0 al 9 |
 | Entropía | Sobre los caracteres (puntos de código) del texto medido |
 

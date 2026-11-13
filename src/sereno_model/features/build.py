@@ -1,15 +1,6 @@
 """Build the train and test feature matrices from the fixed partition.
 
-Every URL of a split run is measured with ``sereno_model.features.extract`` and written, one
-file per split, to a new ``processed/`` folder together with a report. The partition and the
-assembled dataset it came from must reproduce their recorded hashes before anything is used.
-
-The label, the split, the registered-domain group, the synthetic flag and the sources travel
-next to the 24 features, never inside them, so the later leakage controls can use them. The
-scheme and the ``www.`` flag of each URL are kept as ``audit_`` columns for the source-bias
-control only: they are not features and must not be given to a model.
-
-This module is training-side: unlike the extractor, it needs pandas and pyarrow.
+Training-side (pandas, pyarrow). Columns and audit fields: docs/02-caracteristicas.md.
 """
 
 import argparse
@@ -87,7 +78,6 @@ def git_state(repo_dir: Path) -> dict:
 
 
 def latest_split_run(data_dir: Path) -> str:
-    """Name of the newest folder under ``processed/`` that holds a split report."""
     processed = data_dir / "processed"
     runs = [path.parent.name for path in processed.glob("*/split_report.json")]
     if not runs:
@@ -158,9 +148,9 @@ def feature_frame(partition: pd.DataFrame) -> tuple[pd.DataFrame, float]:
 
 
 def matrix_hash(frame: pd.DataFrame) -> str:
-    """SHA-256 over the sorted ``url<TAB>label<TAB>features`` lines, whatever the storage.
+    """SHA-256 over the sorted ``url<TAB>label<TAB>features`` lines.
 
-    Integer features are written in decimal and float ones with ``repr``, which round-trips.
+    Integers are written in decimal and floats with ``repr``, which round-trips.
     """
     columns = [frame["url"], frame["label"]] + [
         frame[name].astype(float if name in FLOAT_FEATURES else int).tolist()
@@ -232,8 +222,8 @@ def build(
 ) -> dict:
     """Write one feature matrix per split and ``features_report.json`` to a new folder.
 
-    The newest split run is used unless ``split_run`` names one. An existing output folder is
-    never overwritten. With ``dry_run`` everything is computed and reported, nothing is written.
+    Uses the newest split run unless ``split_run`` is given and never overwrites a folder.
+    ``dry_run`` computes and reports without writing.
     """
     started = time.perf_counter()
     run = split_run or latest_split_run(data_dir)

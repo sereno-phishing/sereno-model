@@ -1,33 +1,6 @@
-"""Measure the paper-style setup: plain stratified folds and character TF-IDF of the URL.
+"""Measure the paper-style setup: plain stratified folds and a character TF-IDF of the URL.
 
-Exploration run: its figures are not citable as a final result. Only ``features_train.parquet``
-of a feature run is read, through the same hash-checked loader as ``train``; the blind test
-matrix is never opened. P02 (AntiPhishStack) joins hand-crafted URL features with a character
-level TF-IDF of the URL (``max_features=5000``) and evaluates on a random split; the corpus does
-not split by domain. Variants, all with the approved stacking (P09 ranges, out-of-fold
-probabilities, logistic regression meta-model, threshold by mean F1 over the folds, P17):
-
-* ``A``: the 24 features of vector version 2, plain ``StratifiedKFold`` (the ungrouped
-  measurement of ``diagnose``);
-* ``B``: character TF-IDF only, n-grams 1 to 3, plain folds;
-* ``C``: vector version 2 plus character TF-IDF, n-grams 1 to 3, plain folds;
-* ``D``: vector version 2 plus character TF-IDF, n-grams 3 to 5, plain folds;
-* ``E``: the better of ``C`` and ``D`` on the folds grouped by registered domain, as in 1.0.0.
-
-The TF-IDF text is the *measured text* of the vector (``features.extract.measured_text``): the
-normalized URL without the scheme, ``://``, the leading ``www.`` labels, a default port and the
-trailing slashes, so the scheme and the ``www.`` prefix stay out of the model as they do for the
-vector (``docs/02-caracteristicas.md``). The vectorizer sits inside a pipeline with each base
-model, so the search and the out-of-fold predictions fit it on the training rows of each fold
-only. Its matrix stays sparse, and the vector columns join it as sparse columns.
-
-For the best variant the run also refits the model on the whole training split and measures the
-per-URL inference latency (vector extraction, text, TF-IDF, three base models and the
-meta-model; one thread, after a warm-up) and the size of the serialized model, written to a
-temporary directory outside the repository and deleted afterwards.
-
-The report never holds a URL: only registered domains and counts (RNF-05). Each run writes a new
-``<out-dir>/<UTC timestamp>/report.json`` and never overwrites one.
+Exploration run, not citable. Variants A to E and results: docs/03-modelos.md.
 """
 
 import argparse
@@ -147,10 +120,9 @@ def _delta(entry: dict, reference: dict) -> dict:
 
 
 def refit_best(frame: pd.DataFrame, cv, spec: dict, seed: int) -> tuple[StackingModel, float]:
-    """Refit the feature union and the tuned base models on every training row (as 1.0.0 does).
+    """Refit one feature union and the tuned base models on every training row.
 
-    One fitted union serves the three models: the vectorizer is deterministic, so it equals the
-    union each pipeline would fit on the same rows.
+    The vectorizer is deterministic, so this union equals the one each pipeline would fit.
     """
     started = time.perf_counter()
     y = frame["label"].to_numpy().astype(int)

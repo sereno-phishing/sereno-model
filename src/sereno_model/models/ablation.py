@@ -1,19 +1,6 @@
 """Measure the candidate list-based feature groups against the base vector, on training only.
 
-Exploration run: its figures are not citable as a final result. Only ``features_train.parquet``
-of a feature run is read, through the same hash-checked loader as ``train``; the blind test
-matrix is never opened. The candidate columns (``sereno_model.features.candidates``) are
-computed from the ``url`` column with the same parser as the base vector, and each variant runs
-the approved cross-validation (P09 ranges, same ``n_iter``, grouped folds, same seed):
-
-* ``v2``: the 24 features of the base vector;
-* ``v2+G1``, ``v2+G2``, ``v2+G3``: the base vector plus one candidate group;
-* ``v2+G1+G2+G3``: the base vector plus every candidate group.
-
-Every variant uses the same folds. The report also gives the prevalence of each candidate
-feature by class and by source, to flag features that identify a source rather than phishing.
-It never holds a URL: only registered domains and counts (RNF-05). Each run writes a new
-``<out-dir>/<UTC timestamp>/report.json`` and never overwrites one.
+Exploration run, not citable. Variants and results: docs/02-caracteristicas.md.
 """
 
 import argparse

@@ -1,9 +1,7 @@
 """Conservative URL normalization shared by training de-duplication and the backend cache key.
 
-Only the syntactic equivalences that RFC 3986 section 6.2.2 declares safe are applied, plus the
-removal of the scheme default port and of the fragment. Two URLs that a server may answer
-differently are never merged: http and https, a ``www.`` prefix, a trailing slash, an empty path
-versus ``/`` and the order of query parameters all stay distinct.
+Only the RFC 3986 section 6.2.2 safe equivalences, plus dropping the default port and the
+fragment. What stays distinct: docs/decisiones.md.
 """
 
 import re
@@ -36,7 +34,7 @@ class InvalidUrlError(ValueError):
 
 @dataclass(frozen=True)
 class UrlParts:
-    """Components of a normalized URL. ``None`` means absent, which differs from empty."""
+    """Components of a normalized URL; ``None`` means absent, not empty."""
 
     scheme: str
     userinfo: str | None

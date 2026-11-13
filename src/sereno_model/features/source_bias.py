@@ -1,22 +1,7 @@
-"""Source-bias control: can the feature vector recover the scheme, the www. flag or the source?
+"""Source-bias control: can the 24 features recover the scheme, the www. flag or the source?
 
-The control "Sesgo de fuente" of the leakage checklist, applied to the training feature matrix.
-With the 24 features and nothing else, a diagnostic probe tries to guess (A) the scheme of the
-URL, (B) whether it carried ``www.`` and (C) which source it came from. If it can, a class
-model could be learning the source instead of phishing.
-
-Every probe runs inside one class and one shape (with or without a path or query), so neither
-the class nor the presence of a path can explain the result. The probe is validated with folds
-grouped by registered domain and only its out-of-fold predictions are scored. The design is
-described in ``docs/02-caracteristicas.md``.
-
-The run is a diagnostic: every out-of-fold ROC AUC is reported as measured (0.5 = chance,
-1.0 = perfect identification) and each control is summarized by the minimum, median and
-maximum over its evaluated targets. No threshold is applied and no outcome is assigned;
-interpretation is left to the phase document.
-
-Only the training matrix is read; the test matrix is never opened. The probe is a diagnostic,
-not a model of the thesis.
+Training matrix only; out-of-fold AUCs are reported without thresholds.
+Design: docs/02-caracteristicas.md.
 """
 
 import argparse
@@ -75,7 +60,6 @@ SECURE_SCHEME = "https"
 
 
 def latest_features_run(data_dir: Path) -> str:
-    """Name of the newest folder under ``processed/`` that holds a features report."""
     processed = data_dir / "processed"
     runs = [path.parent.name for path in processed.glob(f"*/{FEATURES_REPORT_NAME}")]
     if not runs:
@@ -84,11 +68,9 @@ def latest_features_run(data_dir: Path) -> str:
 
 
 def load_train_matrix(data_dir: Path, run: str) -> tuple[pd.DataFrame, dict]:
-    """Read the training matrix of a features run after checking it; never the test matrix.
+    """Read and check the training matrix of a features run; never the test matrix.
 
-    The recorded content hash covers the URL, the label and the features. The columns it does
-    not cover and that can be derived from the URL (split, scheme, ``www.``, group) are derived
-    again and compared. A ``shape`` column is added for the strata.
+    Columns outside the content hash that derive from the URL are derived again and compared.
     """
     run_dir = data_dir / "processed" / run
     recorded = json.loads((run_dir / FEATURES_REPORT_NAME).read_text(encoding="utf-8"))
@@ -134,10 +116,9 @@ def _auc(labels: np.ndarray, scores: np.ndarray) -> float | None:
 def feature_separability(
     features: np.ndarray, labels: np.ndarray, feature_names: tuple[str, ...]
 ) -> list[dict]:
-    """How well each raw feature alone orders the target, best first; no model involved.
+    """How well each feature alone orders the target, best first.
 
-    The value is ``max(auc, 1 - auc)``, so 0.5 means no separation and 1.0 a perfect one in
-    either direction. Ties keep the order of the feature set.
+    The value is ``max(auc, 1 - auc)``; ties keep the order of the feature set.
     """
     ranking = []
     for position, name in enumerate(feature_names):
@@ -157,8 +138,8 @@ def probe_target(
 ) -> dict:
     """Probe one binary target: counts, out-of-fold AUC, per-fold AUCs and feature ranking.
 
-    A target whose minority side is too small, or that has too few groups on either side, is
-    returned as ``not_evaluable`` with the reason and the counts instead of being fitted.
+    A target with too small a minority side or too few groups is returned as
+    ``not_evaluable`` instead of being fitted.
     """
     labels = np.asarray(labels, dtype=bool)
     groups = np.asarray(groups)
@@ -260,12 +241,10 @@ def probe_strata(frame: pd.DataFrame, seed: int, n_estimators: int, jobs: int) -
 
 
 def control_summaries(strata: list[dict]) -> dict:
-    """Neutral summary of each control over its evaluated targets; no outcome is assigned.
+    """Minimum, median and maximum out-of-fold AUC per control; no outcome is assigned.
 
-    Per control: how many targets were evaluated and how many were not, the minimum, median
-    and maximum out-of-fold AUC of the evaluated ones, and the stratum and target holding the
-    maximum (the first one in report order on a tie). Without an evaluated target both the
-    AUC summary and the location are ``None``.
+    On a tie the maximum is located at the first target in report order; without an
+    evaluated target both are ``None``.
     """
     controls = {}
     for control, name in CONTROLS.items():
@@ -306,10 +285,10 @@ def run_control(
     repo_dir: Path | None = None,
     command: str | None = None,
 ) -> dict:
-    """Run the control on a features run and write ``source_bias_report.json`` to a new folder.
+    """Run the control and write ``source_bias_report.json`` to a new folder.
 
-    The newest features run is used unless ``features_run`` names one. An existing output
-    folder is never overwritten. With ``dry_run`` everything is computed, nothing is written.
+    Uses the newest features run unless ``features_run`` is given and never overwrites a
+    folder. ``dry_run`` writes nothing.
     """
     started = time.perf_counter()
     trees = N_ESTIMATORS if n_estimators is None else n_estimators

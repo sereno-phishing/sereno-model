@@ -37,7 +37,7 @@ Andrés mantuvo la selección del 2026-11-03. El Charter, el ADD y los demás do
 
 ## 2026-11-11: limpieza y duplicados
 
-Las URL se comparan después de aplicar la normalización del criterio de «URL equivalente» del ADD (sección 3.1): esquema y host en minúsculas, sin puerto por defecto, sin fragmento y con los caracteres no reservados decodificados. Se conservan como distintos http y https, el prefijo «www.», la barra final y el orden de los parámetros. Así el entrenamiento y el caché usan la misma definición. Se descartó una normalización más agresiva porque el ADD la excluye.
+Las URL se comparan después de aplicar la normalización del criterio de «URL equivalente» del ADD (sección 3.1): esquema y host en minúsculas, sin puerto por defecto, sin fragmento y con los caracteres no reservados decodificados. Solo se aplican las equivalencias que la sección 6.2.2 del RFC 3986 declara seguras, más quitar el puerto por defecto y el fragmento. Se conservan como distintos http y https, el prefijo «www.», la barra final, la ruta vacía frente a «/» y el orden de los parámetros. Así el entrenamiento y el caché usan la misma definición. Se descartó una normalización más agresiva porque el ADD la excluye.
 
 Una URL con etiquetas contradictorias entre fuentes se excluye y se registra aparte; no se elige una etiqueta. Una URL repetida con la misma etiqueta se conserva una vez, con todas sus fuentes.
 

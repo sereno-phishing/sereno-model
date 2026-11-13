@@ -1,27 +1,7 @@
-"""The Stacking method approved for phase 3 and the model object saved as the artifact.
+"""The Stacking method and the model object saved as the artifact.
 
-Method (``docs/03-modelos.md``, "Método aprobado", approved on 2026-11-12 and updated the same
-day with variant C of the TF-IDF ablation):
-
-1. The inputs are the 24 features of vector version 2 plus a character TF-IDF of the measured
-   text of the URL (n-grams 1 to 3, ``max_features=5000`` as in P02, transformer parameters of
-   P32). The vectorizer sits in a pipeline with each base model, so it is fitted on the training
-   rows of each fold only; the matrix stays sparse. Metadata and audit columns never reach a
-   model. ``ngram_range=None`` keeps the vector-only model of version 1.0.0.
-2. ``StratifiedKFold`` over the training split, shuffled, as in the papers; the folds grouped
-   by registered domain (``StratifiedGroupKFold``) remain available. The same folds serve the
-   hyperparameter search, the out-of-fold predictions and the threshold.
-3. Random Forest, XGBoost and LightGBM are tuned with ``RandomizedSearchCV`` scored by F1, with
-   the ranges of P09. The search budget ``n_iter`` is not in the corpus: it is an own decision.
-4. The meta-features are the out-of-fold phishing probabilities of the tuned base models (P15);
-   the meta-model is a logistic regression (P27) fitted on them. The base models are then
-   refitted on the whole training split.
-5. The threshold maximizes the mean F1 of the meta-model's out-of-fold scores over the folds
-   (P17). The candidate grid is an own decision.
-6. No calibration and no resampling.
-
-Every estimator runs single-threaded with a fixed seed, and parallelism only spreads whole fits
-over workers, so the result does not depend on the number of workers.
+Method, papers and own decisions: docs/03-modelos.md. Estimators are single-threaded and
+seeded, so results do not depend on the number of workers.
 """
 
 import shutil
@@ -156,26 +136,22 @@ def base_estimator(name: str, seed: int):
 
 
 def meta_estimator(seed: int) -> LogisticRegression:
-    return LogisticRegression(random_state=seed)
+    return LogisticRegression(random_state=seed)  # P27
 
 
 def url_text(urls) -> list[str]:
-    """The measured text of every URL: the same normalization path as vector version 2."""
+    """The measured text of every URL, as vector version 2 measures it."""
     return [measured_text(parse_url(url)) for url in urls]
 
 
 def tfidf_vectorizer(ngram_range: tuple[int, int]) -> TfidfVectorizer:
-    """Character TF-IDF of P02 (``max_features=5000``).
-
-    ``norm``, ``use_idf``, ``smooth_idf`` and ``sublinear_tf`` are written out with the values
-    reported by P32 (l2, True, True, False), which are also the scikit-learn defaults.
-    """
+    """Character TF-IDF of the URL text."""
     return TfidfVectorizer(
         analyzer="char",
         ngram_range=tuple(ngram_range),
-        max_features=MAX_FEATURES,
+        max_features=MAX_FEATURES,  # P02
         lowercase=True,
-        norm="l2",
+        norm="l2",  # norm to sublinear_tf: P32, also the scikit-learn defaults
         use_idf=True,
         smooth_idf=True,
         sublinear_tf=False,
@@ -206,8 +182,8 @@ def tfidf_settings(ngram_range: tuple[int, int]) -> dict:
 def feature_union(ngram_range: tuple[int, int], with_vector: bool) -> ColumnTransformer:
     """TF-IDF of the text column, optionally followed by the vector columns, as one sparse matrix.
 
-    The vector features are non-negative, so XGBoost treating the zeros left out of the sparse
-    matrix as missing only moves them to one end of each split, where zero already sits.
+    The vector features are non-negative, so XGBoost reading sparse zeros as missing sends
+    them to the side where zero already sits.
     """
     transformers = [("tfidf", tfidf_vectorizer(ngram_range), TEXT_COLUMN)]
     if with_vector:
@@ -239,7 +215,6 @@ def unprefixed(params: dict) -> dict:
 
 
 def model_inputs(frame: pd.DataFrame, with_vector: bool) -> pd.DataFrame:
-    """The text column, plus the vector columns when ``with_vector``."""
     inputs = pd.DataFrame({TEXT_COLUMN: url_text(frame["url"])}, index=frame.index)
     if with_vector:
         inputs = pd.concat([inputs, frame[feature_columns(frame)]], axis=1)
@@ -292,7 +267,7 @@ def _fold_scores(estimator, X, y: np.ndarray, train: np.ndarray, val: np.ndarray
 
 
 def oof_probabilities(estimator, X, y, folds, n_jobs: int = 1) -> np.ndarray:
-    """Phishing probability of each row, from a copy of ``estimator`` fitted without its fold."""
+    """Phishing probability of each row, from ``estimator`` fitted without its fold (P15)."""
     y = np.asarray(y)
     parts = Parallel(n_jobs=n_jobs)(
         delayed(_fold_scores)(estimator, X, y, train, val) for train, val in folds
@@ -325,8 +300,8 @@ def fold_metrics(y, scores, folds, threshold: float) -> dict:
 def select_threshold(y, scores, folds, grid) -> dict:
     """The grid value with the highest mean F1 over the folds (P17).
 
-    A score counts as phishing when it reaches the threshold. Ties go to the value closest to
-    0.5, then to the lower one.
+    A score reaching the threshold is phishing. Ties go to the value closest to 0.5, then to
+    the lower one.
     """
     y, scores = np.asarray(y), np.asarray(scores)
     curve, per_fold = [], {}
@@ -349,14 +324,10 @@ def select_threshold(y, scores, folds, grid) -> dict:
 
 
 class StackingModel:
-    """The saved artifact: feature union, three base models, meta-model and decision threshold.
+    """The saved artifact: feature union, three base models, meta-model and threshold.
 
-    ``score`` returns the meta-model's phishing probability in [0, 1]; ``predict`` turns it into
-    1 (phishing) or 0 (legitimate) with ``threshold``. The input is a URL, a sequence of URLs,
-    or a frame with a ``url`` column; the frame may also hold every vector column by name, in
-    any order, and then those values are used instead of being computed from the URL. Other
-    columns are ignored. ``features`` is the fitted TF-IDF and vector union, or ``None`` for a
-    vector-only model.
+    Inputs are a URL, a sequence of URLs or a frame with a ``url`` column; a frame holding
+    every vector column uses those values. ``features`` is ``None`` for a vector-only model.
     """
 
     def __init__(
@@ -415,6 +386,7 @@ class StackingModel:
         )
 
     def score(self, X) -> np.ndarray:
+        """Meta-model phishing probability, in [0, 1], of each input."""
         return self.meta_model.predict_proba(self.base_scores(X))[:, 1]
 
     def score_url(self, url: str) -> float:
@@ -422,10 +394,12 @@ class StackingModel:
         return float(self.score([url])[0])
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """Columns: legitimate, phishing."""
         score = self.score(X)
         return np.column_stack([1 - score, score])
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """1 (phishing) when the score reaches ``threshold``, else 0."""
         return (self.score(X) >= self.threshold).astype(int)
 
 
@@ -451,7 +425,7 @@ def _plain(value):
 
 @dataclass
 class CrossValidation:
-    """Everything the grouped (or any given) folds produce, before the final refit."""
+    """Everything the folds produce, before the final refit."""
 
     folds: list
     best_params: dict
@@ -466,7 +440,6 @@ class CrossValidation:
 
 
 def _progress(message: str) -> None:
-    """Print a timestamped progress line so long runs show they are alive."""
     print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
 
@@ -483,9 +456,9 @@ def cross_validate(
 ) -> CrossValidation:
     """Search, out-of-fold predictions, meta-model scores and threshold over ``folds``.
 
-    ``estimator_factory(name, seed)`` builds each untuned base model; it defaults to
-    ``base_estimator``. A factory that returns a pipeline lets every transformer in it be fitted
-    inside each training fold, and its ``search_spaces`` keys then carry the step prefix.
+    ``estimator_factory(name, seed)`` defaults to ``base_estimator``. A pipeline factory fits
+    every transformer inside each training fold; its ``search_spaces`` keys carry the step
+    prefix.
     """
     spaces = SEARCH_SPACES if search_spaces is None else search_spaces
     make = base_estimator if estimator_factory is None else estimator_factory
@@ -561,9 +534,8 @@ def fit_stacking(
 ) -> FitResult:
     """Tune, stack and refit on ``frame``, the training split only.
 
-    With ``ngram_range`` the inputs are vector v2 plus the character TF-IDF; the refit fits one
-    union on every training row and the tuned base models on its matrix. The vectorizer is
-    deterministic, so that union equals the one each pipeline would fit on the same rows.
+    With ``ngram_range`` the refit fits one union on every training row; the vectorizer is
+    deterministic, so it equals the union each pipeline would fit.
     """
     columns = feature_columns(frame)
     y = frame["label"].to_numpy().astype(int)

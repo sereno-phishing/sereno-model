@@ -1,8 +1,6 @@
-"""Registered domain of a URL host, from the Public Suffix List bundled with tldextract.
+"""Registered domain of a host, from the Public Suffix List bundled with tldextract.
 
-Only ICANN suffixes count. Private suffixes such as ``pages.dev`` or ``github.io`` are not
-treated as suffixes, so every site hosted on a shared platform gets the same key. The list is
-the snapshot shipped inside the installed package: nothing is downloaded and nothing is cached.
+ICANN suffixes only and no network access (docs/01-datos.md).
 """
 
 import hashlib
@@ -16,7 +14,6 @@ SNAPSHOT_RESOURCE = ".tld_set_snapshot"
 
 @cache
 def _extractor() -> tldextract.TLDExtract:
-    """The single extractor of the process, bound to the bundled snapshot."""
     return tldextract.TLDExtract(
         cache_dir=None,
         suffix_list_urls=(),
@@ -26,18 +23,15 @@ def _extractor() -> tldextract.TLDExtract:
 
 
 def split_host(host: str) -> tldextract.ExtractResult:
-    """Subdomain, domain and ICANN suffix of ``host``, as found by the shared extractor.
-
-    ``host`` is passed through unchanged: callers decide whether to lowercase it first.
-    """
+    """Subdomain, domain and ICANN suffix of ``host``; the host is not lowercased."""
     return _extractor()(host)
 
 
 def registered_domain(host: str) -> str:
-    """Grouping key of ``host``: its registered domain, in lowercase.
+    """Lowercase registered domain of ``host``.
 
-    A host without one (an IP address, a single label, an unknown suffix or a bare public
-    suffix) is its own key, in lowercase and without a leading ``www.``.
+    A host without one (IP, single label, unknown or bare public suffix) is its own key,
+    lowercased and without a leading ``www.``.
     """
     lowered = host.lower()
     found = split_host(lowered)
@@ -47,7 +41,7 @@ def registered_domain(host: str) -> str:
 
 
 def suffix_list_snapshot_id() -> str:
-    """SHA-256 of the Public Suffix List snapshot as shipped in the installed tldextract."""
+    """SHA-256 of the suffix list shipped in the installed tldextract."""
     snapshot = pkgutil.get_data("tldextract", SNAPSHOT_RESOURCE)
     if snapshot is None:
         raise FileNotFoundError(f"tldextract does not ship {SNAPSHOT_RESOURCE}")
